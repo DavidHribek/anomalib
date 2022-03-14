@@ -166,6 +166,8 @@ def make_mvtec_dataset(
         DataFrame: an output dataframe containing samples for the requested split (ie., train or test)
     """
     samples_list = [(str(path),) + filename.parts[-3:] for filename in path.glob("**/*.png")]
+    samples_list += [(str(path),) + filename.parts[-3:] for filename in path.glob("**/*.jpg")]
+    samples_list += [(str(path),) + filename.parts[-3:] for filename in path.glob("**/*.PNG")]
     if len(samples_list) == 0:
         raise RuntimeError(f"Found 0 images in {path}")
 
