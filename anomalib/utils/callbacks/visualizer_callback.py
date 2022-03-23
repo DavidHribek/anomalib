@@ -19,6 +19,7 @@ from typing import Any, Optional
 from warnings import warn
 
 import pytorch_lightning as pl
+import numpy as np  # EDITED
 from pytorch_lightning import Callback
 from pytorch_lightning.utilities.types import STEP_OUTPUT
 from skimage.segmentation import mark_boundaries
@@ -111,8 +112,8 @@ class VisualizerCallback(Callback):
             normalize = True  # raw anomaly maps. Still need to normalize
         threshold = pl_module.pixel_metrics.F1.threshold
 
-        for (filename, image, true_mask, anomaly_map) in zip(
-            outputs["image_path"], outputs["image"], outputs["mask"], outputs["anomaly_maps"]
+        for (filename, image, true_mask, anomaly_map, score) in zip(  # EDITED
+            outputs["image_path"], outputs["image"], outputs["mask"], outputs["anomaly_maps"], outputs['pred_scores']  # EDITED
         ):
             image = Denormalize()(image.cpu())
             true_mask = true_mask.cpu().numpy()
@@ -122,8 +123,10 @@ class VisualizerCallback(Callback):
             pred_mask = compute_mask(anomaly_map, threshold)
             vis_img = mark_boundaries(image, pred_mask, color=(1, 0, 0), mode="thick")
 
+            score = np.round(score.detach().numpy(), 3)  # EDITED
+
             visualizer = Visualizer(num_rows=1, num_cols=5, figure_size=(12, 3))
-            visualizer.add_image(image=image, title="Image")
+            visualizer.add_image(image=image, title=f"Image {score :4.3f}")  # EDITED
             visualizer.add_image(image=true_mask, color_map="gray", title="Ground Truth")
             visualizer.add_image(image=heat_map, title="Predicted Heat Map")
             visualizer.add_image(image=pred_mask, color_map="gray", title="Predicted Mask")
