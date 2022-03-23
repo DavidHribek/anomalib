@@ -30,6 +30,7 @@ from urllib.request import urlretrieve
 
 import albumentations as A
 import cv2
+from glob import glob  # EDITED
 import os  # EDITED
 import numpy as np
 import pandas as pd
@@ -166,9 +167,16 @@ def make_mvtec_dataset(
     Returns:
         DataFrame: an output dataframe containing samples for the requested split (ie., train or test)
     """
-    samples_list = [(str(path),) + filename.parts[-3:] for filename in path.glob("**/*.png")]
-    samples_list += [(str(path),) + filename.parts[-3:] for filename in path.glob("**/*.jpg")]
-    samples_list += [(str(path),) + filename.parts[-3:] for filename in path.glob("**/*.PNG")]
+    # EDITED - START
+    # samples_list = [(str(path),) + filename.parts[-3:] for filename in path.glob("**/*.png")]
+    # samples_list += [(str(path),) + filename.parts[-3:] for filename in path.glob("**/*.jpg")]
+    # samples_list += [(str(path),) + filename.parts[-3:] for filename in path.glob("**/*.PNG")]
+
+    samples_list = [(str(path), ) + Path(x).parts[-3:] for x in glob(f"{path}/**/*.png", recursive=True)]
+    samples_list += [(str(path), ) + Path(x).parts[-3:] for x in glob(f"{path}/**/*.PNG", recursive=True)]
+    samples_list += [(str(path), ) + Path(x).parts[-3:] for x in glob(f"{path}/**/*.jpg", recursive=True)]
+    # EDITED - END
+
     if len(samples_list) == 0:
         raise RuntimeError(f"Found 0 images in {path}")
 
