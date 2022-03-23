@@ -30,6 +30,7 @@ from urllib.request import urlretrieve
 
 import albumentations as A
 import cv2
+import os  # EDITED
 import numpy as np
 import pandas as pd
 from pandas.core.frame import DataFrame
@@ -350,7 +351,13 @@ class MVTec(VisionDataset):
                 if label_index == 0:
                     mask = np.zeros(shape=image.shape[:2])
                 else:
-                    mask = cv2.imread(mask_path, flags=0) / 255.0
+                    # EDITED - START                    
+                    if os.path.isfile(mask_path):
+                        mask = cv2.imread(mask_path, flags=0) / 255.0
+                    else:
+                        mask = np.zeros(shape=image.shape[:2])
+                    # EDITED - END
+
 
                 pre_processed = self.pre_process(image=image, mask=mask)
 
