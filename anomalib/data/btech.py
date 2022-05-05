@@ -41,15 +41,14 @@ from torchvision.datasets.folder import VisionDataset
 from tqdm import tqdm
 
 from anomalib.data.inference import InferenceDataset
-from anomalib.data.utils import DownloadProgressBar, read_image
+from anomalib.data.utils import DownloadProgressBar, hash_check, read_image
 from anomalib.data.utils.split import (
     create_validation_set_from_test_set,
     split_normal_images_in_train_set,
 )
 from anomalib.pre_processing import PreProcessor
 
-logger = logging.getLogger(name="Dataset: BTech")
-logger.setLevel(logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 
 def make_btech_dataset(
@@ -230,10 +229,10 @@ class BTech(VisionDataset):
         image_path = self.samples.image_path[index]
         image = read_image(image_path)
 
-        if self.split == "train" or self.task == "classification":
-            pre_processed = self.pre_process(image=image)
-            item = {"image": pre_processed["image"]}
-        elif self.split in ["val", "test"]:
+        pre_processed = self.pre_process(image=image)
+        item = {"image": pre_processed["image"]}
+
+        if self.split in ["val", "test"]:
             label_index = self.samples.label_index[index]
 
             item["image_path"] = image_path
@@ -270,6 +269,7 @@ class BTechDataModule(LightningDataModule):
         train_batch_size: int = 32,
         test_batch_size: int = 32,
         num_workers: int = 8,
+        task: str = "segmentation",
         transform_config_train: Optional[Union[str, A.Compose]] = None,
         transform_config_val: Optional[Union[str, A.Compose]] = None,
         seed: int = 0,
@@ -284,6 +284,7 @@ class BTechDataModule(LightningDataModule):
             train_batch_size: Training batch size.
             test_batch_size: Testing batch size.
             num_workers: Number of workers.
+            task: ``classification`` or ``segmentation``
             transform_config_train: Config for pre-processing during training.
             transform_config_val: Config for pre-processing during validation.
             seed: seed used for the random subset splitting
@@ -335,6 +336,7 @@ class BTechDataModule(LightningDataModule):
         self.num_workers = num_workers
 
         self.create_validation_set = create_validation_set
+        self.task = task
         self.seed = seed
 
         self.train_data: Dataset
@@ -346,23 +348,24 @@ class BTechDataModule(LightningDataModule):
     def prepare_data(self) -> None:
         """Download the dataset if not available."""
         if (self.root / self.category).is_dir():
-            logging.info("Found the dataset.")
+            logger.info("Found the dataset.")
         else:
             zip_filename = self.root.parent / "btad.zip"
 
-            logging.info("Downloading the BTech dataset.")
+            logger.info("Downloading the BTech dataset.")
             with DownloadProgressBar(unit="B", unit_scale=True, miniters=1, desc="BTech") as progress_bar:
                 urlretrieve(
                     url="https://avires.dimi.uniud.it/papers/btad/btad.zip",
                     filename=zip_filename,
                     reporthook=progress_bar.update_to,
                 )  # nosec
-
-            logging.info("Extracting the dataset.")
+            logger.info("Checking hash")
+            hash_check(zip_filename, "c1fa4d56ac50dd50908ce04e81037a8e")
+            logger.info("Extracting the dataset.")
             with zipfile.ZipFile(zip_filename, "r") as zip_file:
                 zip_file.extractall(self.root.parent)
 
-            logging.info("Renaming the dataset directory")
+            logger.info("Renaming the dataset directory")
             shutil.move(src=str(self.root.parent / "BTech_Dataset_transformed"), dst=str(self.root))
 
             # NOTE: Each BTech category has different image extension as follows
@@ -374,13 +377,13 @@ class BTechDataModule(LightningDataModule):
             # To avoid any conflict, the following script converts all the extensions to png.
             # This solution works fine, but it's also possible to properly ready the bmp and
             # png filenames from categories in `make_btech_dataset` function.
-            logging.info("Convert the bmp formats to png to have consistent image extensions")
+            logger.info("Convert the bmp formats to png to have consistent image extensions")
             for filename in tqdm(self.root.glob("**/*.bmp"), desc="Converting bmp to png"):
                 image = cv2.imread(str(filename))
                 cv2.imwrite(str(filename.with_suffix(".png")), image)
                 filename.unlink()
 
-            logging.info("Cleaning the tar file")
+            logger.info("Cleaning the tar file")
             zip_filename.unlink()
 
     def setup(self, stage: Optional[str] = None) -> None:
@@ -393,12 +396,14 @@ class BTechDataModule(LightningDataModule):
           stage: Optional[str]:  Train/Val/Test stages. (Default value = None)
 
         """
+        logger.info("Setting up train, validation, test and prediction datasets.")
         if stage in (None, "fit"):
             self.train_data = BTech(
                 root=self.root,
                 category=self.category,
                 pre_process=self.pre_process_train,
                 split="train",
+                task=self.task,
                 seed=self.seed,
                 create_validation_set=self.create_validation_set,
             )
@@ -409,6 +414,7 @@ class BTechDataModule(LightningDataModule):
                 category=self.category,
                 pre_process=self.pre_process_val,
                 split="val",
+                task=self.task,
                 seed=self.seed,
                 create_validation_set=self.create_validation_set,
             )
@@ -418,6 +424,7 @@ class BTechDataModule(LightningDataModule):
             category=self.category,
             pre_process=self.pre_process_val,
             split="test",
+            task=self.task,
             seed=self.seed,
             create_validation_set=self.create_validation_set,
         )

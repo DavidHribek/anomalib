@@ -59,15 +59,14 @@ from torch.utils.data.dataset import Dataset
 from torchvision.datasets.folder import VisionDataset
 
 from anomalib.data.inference import InferenceDataset
-from anomalib.data.utils import DownloadProgressBar, read_image
+from anomalib.data.utils import DownloadProgressBar, hash_check, read_image
 from anomalib.data.utils.split import (
     create_validation_set_from_test_set,
     split_normal_images_in_train_set,
 )
 from anomalib.pre_processing import PreProcessor
 
-logger = logging.getLogger(name="Dataset: MVTec AD")
-logger.setLevel(logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 
 def make_mvtec_dataset(
@@ -264,10 +263,10 @@ class MVTec(VisionDataset):
         image_path = self.samples.image_path[index]
         image = read_image(image_path)
 
-        if self.split == "train" or self.task == "classification":
-            pre_processed = self.pre_process(image=image)
-            item = {"image": pre_processed["image"]}
-        elif self.split in ["val", "test"]:
+        pre_processed = self.pre_process(image=image)
+        item = {"image": pre_processed["image"]}
+
+        if self.split in ["val", "test"]:
             label_index = self.samples.label_index[index]
 
             item["image_path"] = image_path
@@ -310,6 +309,7 @@ class MVTecDataModule(LightningDataModule):
         train_batch_size: int = 32,
         test_batch_size: int = 32,
         num_workers: int = 8,
+        task: str = "segmentation",
         transform_config_train: Optional[Union[str, A.Compose]] = None,
         transform_config_val: Optional[Union[str, A.Compose]] = None,
         seed: int = 0,
@@ -324,6 +324,7 @@ class MVTecDataModule(LightningDataModule):
             train_batch_size: Training batch size.
             test_batch_size: Testing batch size.
             num_workers: Number of workers.
+            task: ``classification`` or ``segmentation``
             transform_config_train: Config for pre-processing during training.
             transform_config_val: Config for pre-processing during validation.
             seed: seed used for the random subset splitting
@@ -375,6 +376,7 @@ class MVTecDataModule(LightningDataModule):
         self.num_workers = num_workers
 
         self.create_validation_set = create_validation_set
+        self.task = task
         self.seed = seed
 
         self.train_data: Dataset
@@ -386,25 +388,29 @@ class MVTecDataModule(LightningDataModule):
     def prepare_data(self) -> None:
         """Download the dataset if not available."""
         if (self.root / self.category).is_dir():
-            logging.info("Found the dataset.")
+            logger.info("Found the dataset.")
         else:
             self.root.mkdir(parents=True, exist_ok=True)
-            dataset_name = "mvtec_anomaly_detection.tar.xz"
 
-            logging.info("Downloading the dataset.")
+            logger.info("Downloading the Mvtec AD dataset.")
+            url = "https://www.mydrive.ch/shares/38536/3830184030e49fe74747669442f0f282/download/420938113-1629952094"
+            dataset_name = "mvtec_anomaly_detection.tar.xz"
+            zip_filename = self.root / dataset_name
             with DownloadProgressBar(unit="B", unit_scale=True, miniters=1, desc="MVTec AD") as progress_bar:
                 urlretrieve(
-                    url=f"ftp://guest:GU.205dldo@ftp.softronics.ch/mvtec_anomaly_detection/{dataset_name}",
-                    filename=self.root / dataset_name,
+                    url=f"{url}/{dataset_name}",
+                    filename=zip_filename,
                     reporthook=progress_bar.update_to,
                 )
+            logger.info("Checking hash")
+            hash_check(zip_filename, "eefca59f2cede9c3fc5b6befbfec275e")
 
-            logging.info("Extracting the dataset.")
-            with tarfile.open(self.root / dataset_name) as tar_file:
+            logger.info("Extracting the dataset.")
+            with tarfile.open(zip_filename) as tar_file:
                 tar_file.extractall(self.root)
 
-            logging.info("Cleaning the tar file")
-            (self.root / dataset_name).unlink()
+            logger.info("Cleaning the tar file")
+            (zip_filename).unlink()
 
     def setup(self, stage: Optional[str] = None) -> None:
         """Setup train, validation and test data.
@@ -413,12 +419,14 @@ class MVTecDataModule(LightningDataModule):
           stage: Optional[str]:  Train/Val/Test stages. (Default value = None)
 
         """
+        logger.info("Setting up train, validation, test and prediction datasets.")
         if stage in (None, "fit"):
             self.train_data = MVTec(
                 root=self.root,
                 category=self.category,
                 pre_process=self.pre_process_train,
                 split="train",
+                task=self.task,
                 seed=self.seed,
                 create_validation_set=self.create_validation_set,
             )
@@ -429,6 +437,7 @@ class MVTecDataModule(LightningDataModule):
                 category=self.category,
                 pre_process=self.pre_process_val,
                 split="val",
+                task=self.task,
                 seed=self.seed,
                 create_validation_set=self.create_validation_set,
             )
@@ -438,6 +447,7 @@ class MVTecDataModule(LightningDataModule):
             category=self.category,
             pre_process=self.pre_process_val,
             split="test",
+            task=self.task,
             seed=self.seed,
             create_validation_set=self.create_validation_set,
         )

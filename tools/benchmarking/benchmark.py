@@ -15,10 +15,14 @@
 # and limitations under the License.
 
 
+import functools
+import io
 import logging
 import math
 import multiprocessing
+import sys
 import time
+import warnings
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -32,6 +36,7 @@ from utils import convert_to_openvino, upload_to_wandb, write_metrics
 from anomalib.config import get_configurable_parameters, update_input_size_config
 from anomalib.data import get_datamodule
 from anomalib.models import get_model
+from anomalib.utils.loggers import configure_logger
 from anomalib.utils.sweep import (
     get_meta_data,
     get_openvino_throughput,
@@ -41,9 +46,43 @@ from anomalib.utils.sweep import (
     set_in_nested_config,
 )
 
-logger = logging.getLogger(__file__)
+warnings.filterwarnings("ignore")
+
+logger = logging.getLogger(__name__)
+configure_logger()
+pl_logger = logging.getLogger(__file__)
+for logger_name in ["pytorch_lightning", "torchmetrics", "os"]:
+    logging.getLogger(logger_name).setLevel(logging.ERROR)
 
 
+def hide_output(func):
+    """Decorator to hide output of the function.
+
+    Args:
+        func (function): Hides output of this function.
+
+    Raises:
+        Exception: Incase the execution of function fails, it raises an exception.
+
+    Returns:
+        object of the called function
+    """
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        std_out = sys.stdout
+        sys.stdout = buf = io.StringIO()
+        try:
+            value = func(*args, **kwargs)
+        except Exception as exp:
+            raise Exception(buf.getvalue()) from exp
+        sys.stdout = std_out
+        return value
+
+    return wrapper
+
+
+@hide_output
 def get_single_model_metrics(model_config: Union[DictConfig, ListConfig], openvino_metrics: bool = False) -> Dict:
     """Collects metrics for `model_name` and returns a dict of results.
 
@@ -65,6 +104,7 @@ def get_single_model_metrics(model_config: Union[DictConfig, ListConfig], openvi
         trainer = Trainer(**model_config.trainer, logger=None, callbacks=callbacks)
 
         start_time = time.time()
+
         trainer.fit(model=model, datamodule=datamodule)
 
         # get start time
@@ -110,11 +150,17 @@ def compute_on_cpu():
     """Compute all run configurations over a sigle CPU."""
     sweep_config = OmegaConf.load("tools/benchmarking/benchmark_params.yaml")
     for run_config in get_run_config(sweep_config.grid_search):
-        model_metrics = sweep(run_config, 0, sweep_config.seed)
+        model_metrics = sweep(run_config, 0, sweep_config.seed, False)
         write_metrics(model_metrics, sweep_config.writer)
 
 
-def compute_on_gpu(run_configs: Union[DictConfig, ListConfig], device: int, seed: int, writers: List[str]):
+def compute_on_gpu(
+    run_configs: Union[DictConfig, ListConfig],
+    device: int,
+    seed: int,
+    writers: List[str],
+    compute_openvino: bool = False,
+):
     """Go over each run config and collect the result.
 
     Args:
@@ -122,10 +168,16 @@ def compute_on_gpu(run_configs: Union[DictConfig, ListConfig], device: int, seed
         device (int): The GPU id used for running the sweep.
         seed (int): Fix a seed.
         writers (List[str]): Destinations to write to.
+        compute_openvino (bool, optional): Compute OpenVINO throughput. Defaults to False.
     """
     for run_config in run_configs:
-        model_metrics = sweep(run_config, device, seed)
-        write_metrics(model_metrics, writers)
+        if isinstance(run_config, (DictConfig, ListConfig)):
+            model_metrics = sweep(run_config, device, seed, compute_openvino)
+            write_metrics(model_metrics, writers)
+        else:
+            raise ValueError(
+                f"Expecting `run_config` of type DictConfig or ListConfig. Got {type(run_config)} instead."
+            )
 
 
 def distribute_over_gpus():
@@ -146,6 +198,7 @@ def distribute_over_gpus():
                     device_id + 1,
                     sweep_config.seed,
                     sweep_config.writer,
+                    sweep_config.compute_openvino,
                 )
             )
         for job in jobs:
@@ -165,7 +218,7 @@ def distribute():
     sweep_config = OmegaConf.load("tools/benchmarking/benchmark_params.yaml")
     devices = sweep_config.hardware
     if not torch.cuda.is_available() and "gpu" in devices:
-        logger.warning("Config requested GPU benchmarking but torch could not detect any cuda enabled devices")
+        pl_logger.warning("Config requested GPU benchmarking but torch could not detect any cuda enabled devices")
     elif {"cpu", "gpu"}.issubset(devices):
         # Create process for gpu and cpu
         with ProcessPoolExecutor(max_workers=2, mp_context=multiprocessing.get_context("spawn")) as executor:
@@ -183,11 +236,15 @@ def distribute():
         upload_to_wandb(team="anomalib")
 
 
-def sweep(run_config: Union[DictConfig, ListConfig], device: int = 0, seed: int = 42) -> Dict[str, Union[float, str]]:
+def sweep(
+    run_config: Union[DictConfig, ListConfig], device: int = 0, seed: int = 42, convert_openvino: bool = False
+) -> Dict[str, Union[float, str]]:
     """Go over all the values mentioned in `grid_search` parameter of the benchmarking config.
 
     Args:
+        run_config: (Union[DictConfig, ListConfig], optional): Configuration for current run.
         device (int, optional): Name of the device on which the model is trained. Defaults to 0 "cpu".
+        convert_openvino (bool, optional): Whether to convert the model to openvino format. Defaults to False.
 
     Returns:
         Dict[str, Union[float, str]]: Dictionary containing the metrics gathered from the sweep.
@@ -201,14 +258,13 @@ def sweep(run_config: Union[DictConfig, ListConfig], device: int = 0, seed: int 
     for param in run_config.keys():
         # grid search keys are always assumed to be strings
         param = cast(str, param)  # placate mypy
-        set_in_nested_config(model_config, param.split("."), run_config[param])
+        set_in_nested_config(model_config, param.split("."), run_config[param])  # type: ignore
 
     # convert image size to tuple in case it was updated by run config
     model_config = update_input_size_config(model_config)
 
     # Set device in config. 0 - cpu, [0], [1].. - gpu id
     model_config.trainer.gpus = 0 if device == 0 else [device - 1]
-    convert_openvino = bool(model_config.trainer.gpus)
 
     if run_config.model_name in ["patchcore", "cflow"]:
         convert_openvino = False  # `torch.cdist` is not supported by onnx version 11
@@ -218,6 +274,10 @@ def sweep(run_config: Union[DictConfig, ListConfig], device: int = 0, seed: int 
 
     # Run benchmarking for current config
     model_metrics = get_single_model_metrics(model_config=model_config, openvino_metrics=convert_openvino)
+    output = f"One sweep run complete for model {model_config.model.name}"
+    output += f" On category {model_config.dataset.category}" if model_config.dataset.category is not None else ""
+    output += str(model_metrics)
+    logger.info(output)
 
     # Append configuration of current run to the collected metrics
     for key, value in run_config.items():
@@ -237,6 +297,6 @@ if __name__ == "__main__":
     # Spawn multiple processes one for cpu and rest for the number of gpus available in the system.
     # The idea is to distribute metrics collection over all the available devices.
 
-    print("Benchmarking started 🏃‍♂️. This will take a while ⏲ depending on your configuration.")
+    logger.info("Benchmarking started 🏃‍♂️. This will take a while ⏲ depending on your configuration.")
     distribute()
-    print("Finished gathering results ⚡")
+    logger.info("Finished gathering results ⚡")

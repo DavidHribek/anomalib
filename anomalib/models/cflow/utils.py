@@ -1,4 +1,4 @@
-"""Helper functions to create backbone model."""
+"""Helper functions for CFlow implementation."""
 
 # Copyright (C) 2020 Intel Corporation
 #
@@ -14,13 +14,33 @@
 # See the License for the specific language governing permissions
 # and limitations under the License.
 
+import logging
 import math
 
-import FrEIA.framework as Ff
-import FrEIA.modules as Fm
+import numpy as np
 import torch
-from FrEIA.framework.sequence_inn import SequenceINN
 from torch import nn
+
+from anomalib.models.components.freia.framework import SequenceINN
+from anomalib.models.components.freia.modules import AllInOneBlock
+
+logger = logging.getLogger(__name__)
+
+
+def get_logp(dim_feature_vector: int, p_u: torch.Tensor, logdet_j: torch.Tensor) -> torch.Tensor:
+    """Returns the log likelihood estimation.
+
+    Args:
+        dim_feature_vector (int): Dimensions of the condition vector
+        p_u (torch.Tensor): Random variable u
+        logdet_j (torch.Tensor): log of determinant of jacobian returned from the invertable decoder
+
+    Returns:
+        torch.Tensor: Log probability
+    """
+    ln_sqrt_2pi = -np.log(np.sqrt(2 * np.pi))  # ln(sqrt(2*pi))
+    logp = dim_feature_vector * ln_sqrt_2pi - 0.5 * torch.sum(p_u**2, 1) + logdet_j
+    return logp
 
 
 def positional_encoding_2d(condition_vector: int, height: int, width: int) -> torch.Tensor:
@@ -90,11 +110,11 @@ def cflow_head(
     Returns:
         SequenceINN: decoder network block
     """
-    coder = Ff.SequenceINN(n_features)
-    print("CNF coder:", n_features)
+    coder = SequenceINN(n_features)
+    logger.info("CNF coder: %d", n_features)
     for _ in range(coupling_blocks):
         coder.append(
-            Fm.AllInOneBlock,
+            AllInOneBlock,
             cond=0,
             cond_shape=(condition_vector,),
             subnet_constructor=subnet_fc,

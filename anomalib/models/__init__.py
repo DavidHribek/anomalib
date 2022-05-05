@@ -25,7 +25,7 @@ from anomalib.models.components import AnomalyModule
 
 # TODO(AlexanderDokuchaev): Workaround of wrapping by NNCF.
 #                           Can't not wrap `spatial_softmax2d` if use import_module.
-from anomalib.models.padim.model import PadimLightning  # noqa: F401
+from anomalib.models.padim.lightning_model import PadimLightning  # noqa: F401
 
 
 def get_model(config: Union[DictConfig, ListConfig]) -> AnomalyModule:
@@ -54,7 +54,7 @@ def get_model(config: Union[DictConfig, ListConfig]) -> AnomalyModule:
     torch_model_list: List[str] = ["padim", "stfpm", "dfkde", "dfm", "patchcore", "cflow", "ganomaly"]
     model: AnomalyModule
 
-    if config.openvino:
+    if "openvino" in config.keys() and config.openvino:
         if config.model.name in openvino_model_list:
             module = import_module(f"anomalib.models.{config.model.name}.model")
             model = getattr(module, f"{config.model.name.capitalize()}OpenVINO")
@@ -62,7 +62,7 @@ def get_model(config: Union[DictConfig, ListConfig]) -> AnomalyModule:
             raise ValueError(f"Unknown model {config.model.name} for OpenVINO model!")
     else:
         if config.model.name in torch_model_list:
-            module = import_module(f"anomalib.models.{config.model.name}.model")
+            module = import_module(f"anomalib.models.{config.model.name}")
             model = getattr(module, f"{config.model.name.capitalize()}Lightning")
         else:
             raise ValueError(f"Unknown model {config.model.name}!")

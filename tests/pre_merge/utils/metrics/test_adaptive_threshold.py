@@ -48,11 +48,13 @@ def test_non_adaptive_threshold():
     Test if the non-adaptive threshold gets used in the F1 score computation when
     adaptive thresholding is disabled and no normalization is used.
     """
-    config = get_test_configurable_parameters(model_config_path="anomalib/models/padim/config.yaml")
+    config = get_test_configurable_parameters(config_path="anomalib/models/padim/config.yaml")
 
     config.model.normalization_method = "none"
     config.model.threshold.adaptive = False
     config.trainer.fast_dev_run = True
+    config.metrics.image = ["F1Score"]
+    config.metrics.pixel = ["F1Score"]
 
     image_threshold = random.random()
     pixel_threshold = random.random()
@@ -65,5 +67,5 @@ def test_non_adaptive_threshold():
 
     trainer = Trainer(**config.trainer, callbacks=callbacks)
     trainer.fit(model=model, datamodule=datamodule)
-    assert trainer.model.image_metrics.F1.threshold == image_threshold
-    assert trainer.model.pixel_metrics.F1.threshold == pixel_threshold
+    assert trainer.model.image_metrics.F1Score.threshold == image_threshold
+    assert trainer.model.pixel_metrics.F1Score.threshold == pixel_threshold

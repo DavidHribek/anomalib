@@ -46,6 +46,7 @@ def get_datamodule(config: Union[DictConfig, ListConfig]) -> LightningDataModule
             test_batch_size=config.dataset.test_batch_size,
             num_workers=config.dataset.num_workers,
             seed=config.project.seed,
+            task=config.dataset.task,
             transform_config_train=config.dataset.transform_config.train,
             transform_config_val=config.dataset.transform_config.val,
             create_validation_set=config.dataset.create_validation_set,
@@ -60,6 +61,7 @@ def get_datamodule(config: Union[DictConfig, ListConfig]) -> LightningDataModule
             test_batch_size=config.dataset.test_batch_size,
             num_workers=config.dataset.num_workers,
             seed=config.project.seed,
+            task=config.dataset.task,
             transform_config_train=config.dataset.transform_config.train,
             transform_config_val=config.dataset.transform_config.val,
             create_validation_set=config.dataset.create_validation_set,
@@ -67,9 +69,10 @@ def get_datamodule(config: Union[DictConfig, ListConfig]) -> LightningDataModule
     elif config.dataset.format.lower() == "folder":
         datamodule = FolderDataModule(
             root=config.dataset.path,
-            normal=config.dataset.normal,
-            abnormal=config.dataset.abnormal,
+            normal_dir=config.dataset.normal_dir,
+            abnormal_dir=config.dataset.abnormal_dir,
             task=config.dataset.task,
+            normal_test_dir=config.dataset.normal_test_dir,
             mask_dir=config.dataset.mask,
             extensions=config.dataset.extensions,
             split_ratio=config.dataset.split_ratio,

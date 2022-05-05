@@ -18,6 +18,7 @@ This script creates a custom dataset from a folder.
 # and limitations under the License.
 
 import logging
+import warnings
 from pathlib import Path
 from typing import Dict, Optional, Tuple, Union
 
@@ -39,8 +40,7 @@ from anomalib.data.utils.split import (
 )
 from anomalib.pre_processing import PreProcessor
 
-logger = logging.getLogger(name="Dataset: Folder Dataset")
-logger.setLevel(logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 
 def _check_and_convert_path(path: Union[str, Path]) -> Path:
@@ -57,9 +57,40 @@ def _check_and_convert_path(path: Union[str, Path]) -> Path:
     return path
 
 
+def _prepare_files_labels(
+    path: Union[str, Path], path_type: str, extensions: Optional[Tuple[str, ...]] = None
+) -> Tuple[list, list]:
+    """Return a list of filenames and list corresponding labels.
+
+    Args:
+        path (Union[str, Path]): Path to the directory containing images.
+        path_type (str): Type of images in the provided path ("normal", "abnormal", "normal_test")
+        extensions (Optional[Tuple[str, ...]], optional): Type of the image extensions to read from the
+            directory.
+
+    Returns:
+        List, List: Filenames of the images provided in the paths, labels of the images provided in the paths
+    """
+    path = _check_and_convert_path(path)
+    if extensions is None:
+        extensions = IMG_EXTENSIONS
+
+    if isinstance(extensions, str):
+        extensions = (extensions,)
+
+    filenames = [f for f in path.glob(r"**/*") if f.suffix in extensions and not f.is_dir()]
+    if len(filenames) == 0:
+        raise RuntimeError(f"Found 0 {path_type} images in {path}")
+
+    labels = [path_type] * len(filenames)
+
+    return filenames, labels
+
+
 def make_dataset(
     normal_dir: Union[str, Path],
     abnormal_dir: Union[str, Path],
+    normal_test_dir: Optional[Union[str, Path]] = None,
     mask_dir: Optional[Union[str, Path]] = None,
     split: Optional[str] = None,
     split_ratio: float = 0.2,
@@ -72,6 +103,9 @@ def make_dataset(
     Args:
         normal_dir (Union[str, Path]): Path to the directory containing normal images.
         abnormal_dir (Union[str, Path]): Path to the directory containing abnormal images.
+        normal_test_dir (Optional[Union[str, Path]], optional): Path to the directory containing
+            normal images for the test dataset. Normal test images will be a split of `normal_dir`
+            if `None`. Defaults to None.
         mask_dir (Optional[Union[str, Path]], optional): Path to the directory containing
             the mask annotations. Defaults to None.
         split (Optional[str], optional): Dataset split (ie., either train or test). Defaults to None.
@@ -87,43 +121,33 @@ def make_dataset(
     Returns:
         DataFrame: an output dataframe containing samples for the requested split (ie., train or test)
     """
-    normal_dir = _check_and_convert_path(normal_dir)
-    abnormal_dir = _check_and_convert_path(abnormal_dir)
 
-    if extensions is None:
-        extensions = IMG_EXTENSIONS
+    filenames = []
+    labels = []
+    dirs = {"normal": normal_dir, "abnormal": abnormal_dir}
 
-    # Get filenames from normal and abnormal directory.
-    normal_filenames = [f for f in normal_dir.glob(r"**/*") if f.suffix in extensions]
-    abnormal_filenames = [f for f in abnormal_dir.glob(r"**/*") if f.suffix in extensions]
-    filenames = normal_filenames + abnormal_filenames
+    if normal_test_dir:
+        dirs = {**dirs, **{"normal_test": normal_test_dir}}
 
-    if len(normal_filenames) == 0:
-        raise RuntimeError(f"Found 0 normal images in {normal_dir}")
-
-    if len(abnormal_filenames) == 0:
-        raise RuntimeError(f"Found 0 annormal images in {abnormal_dir}")
-
-    # Add normal and abnormal labels to the samples as `label` column.
-    normal_labels = ["normal"] * len(normal_filenames)
-    abnormal_labels = ["abnormal"] * len(abnormal_filenames)
-    labels = normal_labels + abnormal_labels
+    for dir_type, path in dirs.items():
+        filename, label = _prepare_files_labels(path, dir_type, extensions)
+        filenames += filename
+        labels += label
 
     samples = DataFrame({"image_path": filenames, "label": labels})
 
     # Create label index for normal (0) and abnormal (1) images.
-    samples.loc[(samples.label == "normal"), "label_index"] = 0
+    samples.loc[(samples.label == "normal") | (samples.label == "normal_test"), "label_index"] = 0
     samples.loc[(samples.label == "abnormal"), "label_index"] = 1
     samples.label_index = samples.label_index.astype(int)
 
     # If a path to mask is provided, add it to the sample dataframe.
     if mask_dir is not None:
         mask_dir = _check_and_convert_path(mask_dir)
-        normal_gt = ["" for f in normal_filenames]
-        abnormal_gt = [str(mask_dir / f.name) for f in abnormal_filenames]
-        gt_filenames = normal_gt + abnormal_gt
-
-        samples["mask_path"] = gt_filenames
+        samples["mask_path"] = ""
+        for index, row in samples.iterrows():
+            if row.label_index == 1:
+                samples.loc[index, "mask_path"] = str(mask_dir / row.image_path.name)
 
     # Ensure the pathlib objects are converted to str.
     # This is because torch dataloader doesn't like pathlib.
@@ -133,10 +157,12 @@ def make_dataset(
     # By default, all the normal samples are assigned as train.
     #   and all the abnormal samples are test.
     samples.loc[(samples.label == "normal"), "split"] = "train"
-    samples.loc[(samples.label == "abnormal"), "split"] = "test"
-    samples = split_normal_images_in_train_set(
-        samples=samples, split_ratio=split_ratio, seed=seed, normal_label="normal"
-    )
+    samples.loc[(samples.label == "abnormal") | (samples.label == "normal_test"), "split"] = "test"
+
+    if not normal_test_dir:
+        samples = split_normal_images_in_train_set(
+            samples=samples, split_ratio=split_ratio, seed=seed, normal_label="normal"
+        )
 
     # If `create_validation_set` is set to True, the test set is split into half.
     if create_validation_set:
@@ -159,6 +185,7 @@ class FolderDataset(Dataset):
         abnormal_dir: Union[Path, str],
         split: str,
         pre_process: PreProcessor,
+        normal_test_dir: Optional[Union[Path, str]] = None,
         split_ratio: float = 0.2,
         mask_dir: Optional[Union[Path, str]] = None,
         extensions: Optional[Tuple[str, ...]] = None,
@@ -174,6 +201,8 @@ class FolderDataset(Dataset):
             split (Optional[str], optional): Dataset split (ie., either train or test). Defaults to None.
             pre_process (Optional[PreProcessor], optional): Image Pro-processor to apply transform.
                 Defaults to None.
+            normal_test_dir (Optional[Union[str, Path]], optional): Path to the directory containing
+                normal images for the test dataset. Defaults to None.
             split_ratio (float, optional): Ratio to split normal training images and add to the
                 test set in case test set doesn't contain any normal images.
                 Defaults to 0.2.
@@ -193,11 +222,20 @@ class FolderDataset(Dataset):
         """
         self.split = split
 
+        if task == "segmentation" and mask_dir is None:
+            warnings.warn(
+                "Segmentation task is requested, but mask directory is not provided. "
+                "Classification is to be chosen if mask directory is not provided."
+            )
+            self.task = "classification"
+
         if task == "classification" and mask_dir:
-            raise ValueError(
+            warnings.warn(
                 "Classification task is requested, but mask directory is provided. "
                 "Segmentation task is to be chosen if mask directory is provided."
             )
+            self.task = "segmentation"
+
         if task is None or mask_dir is None:
             self.task = "classification"
         else:
@@ -207,6 +245,7 @@ class FolderDataset(Dataset):
         self.samples = make_dataset(
             normal_dir=normal_dir,
             abnormal_dir=abnormal_dir,
+            normal_test_dir=normal_test_dir,
             mask_dir=mask_dir,
             split=split,
             split_ratio=split_ratio,
@@ -268,9 +307,10 @@ class FolderDataModule(LightningDataModule):
     def __init__(
         self,
         root: Union[str, Path],
-        normal: str = "normal",
-        abnormal: str = "abnormal",
+        normal_dir: str = "normal",
+        abnormal_dir: str = "abnormal",
         task: str = "classification",
+        normal_test_dir: Optional[Union[Path, str]] = None,
         mask_dir: Optional[Union[Path, str]] = None,
         extensions: Optional[Tuple[str, ...]] = None,
         split_ratio: float = 0.2,
@@ -287,12 +327,14 @@ class FolderDataModule(LightningDataModule):
 
         Args:
             root (Union[str, Path]): Path to the root folder containing normal and abnormal dirs.
-            normal (str, optional): Name of the directory containing normal images.
+            normal_dir (str, optional): Name of the directory containing normal images.
                 Defaults to "normal".
-            abnormal (str, optional): Name of the directory containing abnormal images.
+            abnormal_dir (str, optional): Name of the directory containing abnormal images.
                 Defaults to "abnormal".
             task (str, optional): Task type. Could be either classification or segmentation.
                 Defaults to "classification".
+            normal_test_dir (Optional[Union[str, Path]], optional): Path to the directory containing
+                normal images for the test dataset. Defaults to None.
             mask_dir (Optional[Union[str, Path]], optional): Path to the directory containing
                 the mask annotations. Defaults to None.
             extensions (Optional[Tuple[str, ...]], optional): Type of the image extensions to read from the
@@ -382,8 +424,11 @@ class FolderDataModule(LightningDataModule):
         super().__init__()
 
         self.root = _check_and_convert_path(root)
-        self.normal_dir = self.root / normal
-        self.abnormal_dir = self.root / abnormal
+        self.normal_dir = self.root / normal_dir
+        self.abnormal_dir = self.root / abnormal_dir
+        self.normal_test = normal_test_dir
+        if normal_test_dir:
+            self.normal_test = self.root / normal_test_dir
         self.mask_dir = mask_dir
         self.extensions = extensions
         self.split_ratio = split_ratio
@@ -425,10 +470,12 @@ class FolderDataModule(LightningDataModule):
           stage: Optional[str]:  Train/Val/Test stages. (Default value = None)
 
         """
+        logger.info("Setting up train, validation, test and prediction datasets.")
         if stage in (None, "fit"):
             self.train_data = FolderDataset(
                 normal_dir=self.normal_dir,
                 abnormal_dir=self.abnormal_dir,
+                normal_test_dir=self.normal_test,
                 split="train",
                 split_ratio=self.split_ratio,
                 mask_dir=self.mask_dir,
@@ -443,6 +490,7 @@ class FolderDataModule(LightningDataModule):
             self.val_data = FolderDataset(
                 normal_dir=self.normal_dir,
                 abnormal_dir=self.abnormal_dir,
+                normal_test_dir=self.normal_test,
                 split="val",
                 split_ratio=self.split_ratio,
                 mask_dir=self.mask_dir,
@@ -457,6 +505,7 @@ class FolderDataModule(LightningDataModule):
             normal_dir=self.normal_dir,
             abnormal_dir=self.abnormal_dir,
             split="test",
+            normal_test_dir=self.normal_test,
             split_ratio=self.split_ratio,
             mask_dir=self.mask_dir,
             pre_process=self.pre_process_val,

@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions
 # and limitations under the License.
 
+import logging
 from typing import Any, Dict, Optional
 
 import pytorch_lightning as pl
@@ -22,7 +23,10 @@ from pytorch_lightning.utilities.types import STEP_OUTPUT
 from torch.distributions import LogNormal
 
 from anomalib.models import get_model
+from anomalib.models.components import AnomalyModule
 from anomalib.post_processing.normalization.cdf import normalize, standardize
+
+logger = logging.getLogger(__name__)
 
 
 class CdfNormalizationCallback(Callback):
@@ -32,24 +36,25 @@ class CdfNormalizationCallback(Callback):
         self.image_dist: Optional[LogNormal] = None
         self.pixel_dist: Optional[LogNormal] = None
 
-    def on_test_start(self, _trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
+    def on_test_start(self, _trainer: pl.Trainer, pl_module: AnomalyModule) -> None:
         """Called when the test begins."""
-        pl_module.image_metrics.F1.threshold = 0.5
-        pl_module.pixel_metrics.F1.threshold = 0.5
+        pl_module.image_metrics.set_threshold(0.5)
+        pl_module.pixel_metrics.set_threshold(0.5)
 
-    def on_validation_epoch_start(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule") -> None:
+    def on_validation_epoch_start(self, trainer: "pl.Trainer", pl_module: AnomalyModule) -> None:
         """Called when the validation starts after training.
 
         Use the current model to compute the anomaly score distributions
         of the normal training data. This is needed after every epoch, because the statistics must be
         stored in the state dict of the checkpoint file.
         """
+        logger.info("Collecting the statistics of the normal training data to normalize the scores.")
         self._collect_stats(trainer, pl_module)
 
     def on_validation_batch_end(
         self,
         _trainer: pl.Trainer,
-        pl_module: pl.LightningModule,
+        pl_module: AnomalyModule,
         outputs: Optional[STEP_OUTPUT],
         _batch: Any,
         _batch_idx: int,
@@ -61,7 +66,7 @@ class CdfNormalizationCallback(Callback):
     def on_test_batch_end(
         self,
         _trainer: pl.Trainer,
-        pl_module: pl.LightningModule,
+        pl_module: AnomalyModule,
         outputs: Optional[STEP_OUTPUT],
         _batch: Any,
         _batch_idx: int,
@@ -74,7 +79,7 @@ class CdfNormalizationCallback(Callback):
     def on_predict_batch_end(
         self,
         _trainer: pl.Trainer,
-        pl_module: pl.LightningModule,
+        pl_module: AnomalyModule,
         outputs: Dict,
         _batch: Any,
         _batch_idx: int,
@@ -120,7 +125,7 @@ class CdfNormalizationCallback(Callback):
             )
 
     @staticmethod
-    def _normalize_batch(outputs: STEP_OUTPUT, pl_module: pl.LightningModule) -> None:
+    def _normalize_batch(outputs: STEP_OUTPUT, pl_module: AnomalyModule) -> None:
         outputs["pred_scores"] = normalize(outputs["pred_scores"], pl_module.image_threshold.value)
         if "anomaly_maps" in outputs.keys():
             outputs["anomaly_maps"] = normalize(outputs["anomaly_maps"], pl_module.pixel_threshold.value)
