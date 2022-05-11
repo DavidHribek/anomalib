@@ -142,6 +142,7 @@ class VisualizerCallback(Callback):
 
             visualizer = Visualizer()
 
+            visualizer.set_text(f"GT Label: {'Anomalous' if gt_label else 'Normal'}, Label: {'Anomalous' if pred_score > threshold else 'Normal'}, Score: {pred_score: .3f}")
             if self.task == "segmentation":
                 visualizer.add_image(image=image, title="Image")
                 if "mask" in outputs:

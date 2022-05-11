@@ -40,6 +40,7 @@ class Visualizer:
 
         self.figure: matplotlib.figure.Figure
         self.axis: np.ndarray
+        self.text: str = ''
 
     def add_image(self, image: np.ndarray, title: str, color_map: Optional[str] = None):
         """Add image to figure.
@@ -51,6 +52,9 @@ class Visualizer:
         """
         image_data = dict(image=image, title=title, color_map=color_map)
         self.images.append(image_data)
+
+    def set_text(self, text: str):
+        self.text = text
 
     def generate(self):
         """Generate the image."""
@@ -65,6 +69,8 @@ class Visualizer:
             axis.axes.yaxis.set_visible(False)
             axis.imshow(image_dict["image"], image_dict["color_map"], vmin=0, vmax=255)
             axis.title.set_text(image_dict["title"])
+        
+        self.figure.text(0.5, 0.07, self.text, horizontalalignment='center', verticalalignment='center')
 
     def show(self):
         """Show image on a matplotlib figure."""
