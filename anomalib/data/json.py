@@ -76,6 +76,7 @@ def make_json_dataset(
     seed: int = 0,
     create_validation_set: bool = False,
 ) -> DataFrame:
+    print('make json dataset xxxxxx')
     """Create MVTec AD samples by parsing the MVTec AD data file structure.
 
     The files are expected to follow the structure:
