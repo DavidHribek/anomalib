@@ -15,6 +15,7 @@
 # and limitations under the License.
 
 from typing import Union
+from anomalib.data.json import JsonDataModule
 
 from omegaconf import DictConfig, ListConfig
 from pytorch_lightning import LightningDataModule
@@ -81,6 +82,21 @@ def get_datamodule(config: Union[DictConfig, ListConfig]) -> LightningDataModule
             train_batch_size=config.dataset.train_batch_size,
             test_batch_size=config.dataset.test_batch_size,
             num_workers=config.dataset.num_workers,
+            transform_config_train=config.dataset.transform_config.train,
+            transform_config_val=config.dataset.transform_config.val,
+            create_validation_set=config.dataset.create_validation_set,
+        )
+    elif config.dataset.format.lower() == "json":
+        datamodule = JsonDataModule(
+            # TODO: Remove config values. IAAALD-211
+            root=config.dataset.path,
+            category=config.dataset.category,
+            image_size=(config.dataset.image_size[0], config.dataset.image_size[1]),
+            train_batch_size=config.dataset.train_batch_size,
+            test_batch_size=config.dataset.test_batch_size,
+            num_workers=config.dataset.num_workers,
+            seed=config.project.seed,
+            task=config.dataset.task,
             transform_config_train=config.dataset.transform_config.train,
             transform_config_val=config.dataset.transform_config.val,
             create_validation_set=config.dataset.create_validation_set,
