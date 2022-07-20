@@ -91,8 +91,7 @@ class PreProcessor:
         """Get transforms from config or image size.
 
         Returns:
-            A.Compose: List of albumentation transformations to apply to the
-                input image.
+            A.Compose: List of albumentation transformations to apply to the input image.
         """
         if self.config is None and self.image_size is None:
             raise ValueError(

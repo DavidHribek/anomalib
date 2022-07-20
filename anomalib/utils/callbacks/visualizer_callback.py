@@ -59,6 +59,7 @@ class VisualizerCallback(Callback):
         module: AnomalyModule,
         trainer: pl.Trainer,
         filename: Path,
+        pred_score: float
     ):
         """Save image to logger/local storage.
 
@@ -95,7 +96,7 @@ class VisualizerCallback(Callback):
                 warn(f"{log_to} not in the list of supported image loggers.")
 
         if "local" in module.hparams.project.log_images_to:
-            visualizer.save(Path(module.hparams.project.path) / "images" / filename.parent.name / filename.name)
+            visualizer.save(Path(module.hparams.project.path) / "images" / filename.parent.name / (f"{pred_score: .3f}_" + filename.name))
 
     def on_test_batch_end(
         self,
@@ -161,7 +162,9 @@ class VisualizerCallback(Callback):
                 visualizer.add_image(image=image_classified, title="Prediction")
 
             visualizer.generate()
-            self._add_images(visualizer, pl_module, trainer, Path(filename))
+
+            # self._add_images(visualizer, pl_module, trainer, Path(filename))
+            self._add_images(visualizer, pl_module, trainer, Path(filename), pred_score)
             visualizer.close()
 
     def on_test_end(self, _trainer: pl.Trainer, pl_module: AnomalyModule) -> None:
