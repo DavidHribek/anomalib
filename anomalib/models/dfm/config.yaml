@@ -7,7 +7,7 @@ dataset:
   image_size: 256
   train_batch_size: 32
   test_batch_size: 32
-  num_workers: 36
+  num_workers: 8
   transform_config:
     train: null
     val: null
@@ -16,15 +16,13 @@ dataset:
 model:
   name: dfm
   backbone: resnet18
+  pre_trained: true
   layer: layer3
   pooling_kernel_size: 4
   pca_level: 0.97
   score_type: fre # nll: for Gaussian modeling, fre: pca feature reconstruction error
   project_path: ./results
   normalization_method: min_max # options: [null, min_max, cdf]
-  threshold:
-    image_default: 0
-    adaptive: true
 
 metrics:
   image:
@@ -33,12 +31,24 @@ metrics:
   pixel:
     - F1Score
     - AUROC
+  threshold:
+    image_default: 0
+    adaptive: true
+
+visualization:
+  show_images: False # show images on the screen
+  save_images: False # save images to the file system
+  log_images: False # log images to the available loggers (if any)
+  image_save_path: null # path to which images will be saved
+  mode: full # options: ["full", "simple"]
 
 project:
   seed: 42
   path: ./results
-  log_images_to: []
-  logger: false # options: [tensorboard, wandb, csv] or combinations.
+
+logging:
+  logger: [] # options: [tensorboard, wandb, csv] or combinations.
+  log_graph: false # Logs the model graph to respective logger.
 
 # PL Trainer Args. Don't add extra parameter here.
 trainer:

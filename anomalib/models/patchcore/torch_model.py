@@ -1,24 +1,12 @@
 """PyTorch model for the PatchCore model implementation."""
 
-# Copyright (C) 2020 Intel Corporation
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions
-# and limitations under the License.
+# Copyright (C) 2022 Intel Corporation
+# SPDX-License-Identifier: Apache-2.0
 
 from typing import Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.nn.functional as F
-import torchvision
 from torch import Tensor, nn
 
 from anomalib.models.components import (
@@ -35,28 +23,23 @@ class PatchcoreModel(DynamicBufferModule, nn.Module):
 
     def __init__(
         self,
-        layers: List[str],
         input_size: Tuple[int, int],
+        layers: List[str],
         backbone: str = "wide_resnet50_2",
-        apply_tiling: bool = False,
-        tile_size: Optional[Tuple[int, int]] = None,
-        tile_stride: Optional[int] = None,
+        pre_trained: bool = True,
+        num_neighbors: int = 9,
     ) -> None:
         super().__init__()
+        self.tiler: Optional[Tiler] = None
 
-        self.backbone = getattr(torchvision.models, backbone)
+        self.backbone = backbone
         self.layers = layers
         self.input_size = input_size
-        self.apply_tiling = apply_tiling
+        self.num_neighbors = num_neighbors
 
-        self.feature_extractor = FeatureExtractor(backbone=self.backbone(pretrained=True), layers=self.layers)
+        self.feature_extractor = FeatureExtractor(backbone=self.backbone, pre_trained=pre_trained, layers=self.layers)
         self.feature_pooler = torch.nn.AvgPool2d(3, 1, 1)
         self.anomaly_map_generator = AnomalyMapGenerator(input_size=input_size)
-
-        if apply_tiling:
-            assert tile_size is not None
-            assert tile_stride is not None
-            self.tiler = Tiler(tile_size, tile_stride)
 
         self.register_buffer("memory_bank", torch.Tensor())
         self.memory_bank: torch.Tensor
@@ -76,7 +59,7 @@ class PatchcoreModel(DynamicBufferModule, nn.Module):
             Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]: Embedding for training,
                 anomaly map and anomaly score for testing.
         """
-        if self.apply_tiling:
+        if self.tiler:
             input_tensor = self.tiler.tile(input_tensor)
 
         with torch.no_grad():
@@ -85,7 +68,7 @@ class PatchcoreModel(DynamicBufferModule, nn.Module):
         features = {layer: self.feature_pooler(feature) for layer, feature in features.items()}
         embedding = self.generate_embedding(features)
 
-        if self.apply_tiling:
+        if self.tiler:
             embedding = self.tiler.untile(embedding)
 
         feature_map_shape = embedding.shape[-2:]
@@ -94,7 +77,7 @@ class PatchcoreModel(DynamicBufferModule, nn.Module):
         if self.training:
             output = embedding
         else:
-            patch_scores = self.nearest_neighbors(embedding=embedding, n_neighbors=9)
+            patch_scores = self.nearest_neighbors(embedding=embedding, n_neighbors=self.num_neighbors)
             anomaly_map, anomaly_score = self.anomaly_map_generator(
                 patch_scores=patch_scores, feature_map_shape=feature_map_shape
             )

@@ -24,22 +24,12 @@ Reference:
       9584-9592, 2019, DOI: 10.1109/CVPR.2019.00982.
 """
 
-# Copyright (C) 2020 Intel Corporation
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions
-# and limitations under the License.
+# Copyright (C) 2022 Intel Corporation
+# SPDX-License-Identifier: Apache-2.0
 
 import logging
 import tarfile
+import warnings
 from pathlib import Path
 from typing import Dict, Optional, Tuple, Union
 from urllib.request import urlretrieve
@@ -52,6 +42,7 @@ import numpy as np
 import pandas as pd
 from pandas.core.frame import DataFrame
 from pytorch_lightning.core.datamodule import LightningDataModule
+from pytorch_lightning.utilities.cli import DATAMODULE_REGISTRY
 from pytorch_lightning.utilities.types import EVAL_DATALOADERS, TRAIN_DATALOADERS
 from torch import Tensor
 from torch.utils.data import DataLoader
@@ -73,7 +64,7 @@ def make_mvtec_dataset(
     path: Path,
     split: Optional[str] = None,
     split_ratio: float = 0.1,
-    seed: int = 0,
+    seed: Optional[int] = None,
     create_validation_set: bool = False,
 ) -> DataFrame:
     """Create MVTec AD samples by parsing the MVTec AD data file structure.
@@ -175,7 +166,7 @@ def make_mvtec_dataset(
     return samples
 
 
-class MVTec(VisionDataset):
+class MVTecDataset(VisionDataset):
     """MVTec AD PyTorch Dataset."""
 
     def __init__(
@@ -185,7 +176,7 @@ class MVTec(VisionDataset):
         pre_process: PreProcessor,
         split: str,
         task: str = "segmentation",
-        seed: int = 0,
+        seed: Optional[int] = None,
         create_validation_set: bool = False,
     ) -> None:
         """Mvtec AD Dataset class.
@@ -200,10 +191,10 @@ class MVTec(VisionDataset):
             create_validation_set: Create a validation subset in addition to the train and test subsets
 
         Examples:
-            >>> from anomalib.data.mvtec import MVTec
+            >>> from anomalib.data.mvtec import MVTecDataset
             >>> from anomalib.data.transforms import PreProcessor
             >>> pre_process = PreProcessor(image_size=256)
-            >>> dataset = MVTec(
+            >>> dataset = MVTecDataset(
             ...     root='./datasets/MVTec',
             ...     category='leather',
             ...     pre_process=pre_process,
@@ -230,6 +221,14 @@ class MVTec(VisionDataset):
             (torch.Size([3, 256, 256]), torch.Size([256, 256]))
         """
         super().__init__(root)
+
+        if seed is None:
+            warnings.warn(
+                "seed is None."
+                " When seed is not set, images from the normal directory are split between training and test dir."
+                " This will lead to inconsistency between runs."
+            )
+
         self.root = Path(root) if isinstance(root, str) else root
         self.category: str = category
         self.split = split
@@ -297,7 +296,8 @@ class MVTec(VisionDataset):
         return item
 
 
-class MVTecDataModule(LightningDataModule):
+@DATAMODULE_REGISTRY
+class MVTec(LightningDataModule):
     """MVTec AD Lightning Data Module."""
 
     def __init__(
@@ -312,7 +312,7 @@ class MVTecDataModule(LightningDataModule):
         task: str = "segmentation",
         transform_config_train: Optional[Union[str, A.Compose]] = None,
         transform_config_val: Optional[Union[str, A.Compose]] = None,
-        seed: int = 0,
+        seed: Optional[int] = None,
         create_validation_set: bool = False,
     ) -> None:
         """Mvtec AD Lightning Data Module.
@@ -331,8 +331,8 @@ class MVTecDataModule(LightningDataModule):
             create_validation_set: Create a validation subset in addition to the train and test subsets
 
         Examples
-            >>> from anomalib.data import MVTecDataModule
-            >>> datamodule = MVTecDataModule(
+            >>> from anomalib.data import MVTec
+            >>> datamodule = MVTec(
             ...     root="./datasets/MVTec",
             ...     category="leather",
             ...     image_size=256,
@@ -421,7 +421,7 @@ class MVTecDataModule(LightningDataModule):
         """
         logger.info("Setting up train, validation, test and prediction datasets.")
         if stage in (None, "fit"):
-            self.train_data = MVTec(
+            self.train_data = MVTecDataset(
                 root=self.root,
                 category=self.category,
                 pre_process=self.pre_process_train,
@@ -432,7 +432,7 @@ class MVTecDataModule(LightningDataModule):
             )
 
         if self.create_validation_set:
-            self.val_data = MVTec(
+            self.val_data = MVTecDataset(
                 root=self.root,
                 category=self.category,
                 pre_process=self.pre_process_val,
@@ -442,7 +442,7 @@ class MVTecDataModule(LightningDataModule):
                 create_validation_set=self.create_validation_set,
             )
 
-        self.test_data = MVTec(
+        self.test_data = MVTecDataset(
             root=self.root,
             category=self.category,
             pre_process=self.pre_process_val,

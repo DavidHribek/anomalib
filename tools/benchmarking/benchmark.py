@@ -1,19 +1,7 @@
 """Benchmark all the algorithms in the repo."""
 
-# Copyright (C) 2020 Intel Corporation
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions
-# and limitations under the License.
-
+# Copyright (C) 2022 Intel Corporation
+# SPDX-License-Identifier: Apache-2.0
 
 import functools
 import io
@@ -23,10 +11,12 @@ import multiprocessing
 import sys
 import time
 import warnings
+from argparse import ArgumentParser
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from datetime import datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Dict, List, Union, cast
+from typing import Dict, List, Optional, Union, cast
 
 import torch
 from omegaconf import DictConfig, ListConfig, OmegaConf
@@ -99,7 +89,7 @@ def get_single_model_metrics(model_config: Union[DictConfig, ListConfig], openvi
         datamodule = get_datamodule(model_config)
         model = get_model(model_config)
 
-        callbacks = get_sweep_callbacks()
+        callbacks = get_sweep_callbacks(model_config)
 
         trainer = Trainer(**model_config.trainer, logger=None, callbacks=callbacks)
 
@@ -146,19 +136,19 @@ def get_single_model_metrics(model_config: Union[DictConfig, ListConfig], openvi
     return data
 
 
-def compute_on_cpu():
+def compute_on_cpu(sweep_config: Union[DictConfig, ListConfig], folder: Optional[str] = None):
     """Compute all run configurations over a sigle CPU."""
-    sweep_config = OmegaConf.load("tools/benchmarking/benchmark_params.yaml")
     for run_config in get_run_config(sweep_config.grid_search):
         model_metrics = sweep(run_config, 0, sweep_config.seed, False)
-        write_metrics(model_metrics, sweep_config.writer)
+        write_metrics(model_metrics, sweep_config.writer, folder)
 
 
 def compute_on_gpu(
-    run_configs: Union[DictConfig, ListConfig],
+    run_configs: List[DictConfig],
     device: int,
     seed: int,
     writers: List[str],
+    folder: Optional[str] = None,
     compute_openvino: bool = False,
 ):
     """Go over each run config and collect the result.
@@ -168,21 +158,21 @@ def compute_on_gpu(
         device (int): The GPU id used for running the sweep.
         seed (int): Fix a seed.
         writers (List[str]): Destinations to write to.
+        folder (optional, str): Sub-directory to which runs are written to. Defaults to None. If none writes to root.
         compute_openvino (bool, optional): Compute OpenVINO throughput. Defaults to False.
     """
     for run_config in run_configs:
         if isinstance(run_config, (DictConfig, ListConfig)):
             model_metrics = sweep(run_config, device, seed, compute_openvino)
-            write_metrics(model_metrics, writers)
+            write_metrics(model_metrics, writers, folder)
         else:
             raise ValueError(
                 f"Expecting `run_config` of type DictConfig or ListConfig. Got {type(run_config)} instead."
             )
 
 
-def distribute_over_gpus():
+def distribute_over_gpus(sweep_config: Union[DictConfig, ListConfig], folder: Optional[str] = None):
     """Distribute metric collection over all available GPUs. This is done by splitting the list of configurations."""
-    sweep_config = OmegaConf.load("tools/benchmarking/benchmark_params.yaml")
     with ProcessPoolExecutor(
         max_workers=torch.cuda.device_count(), mp_context=multiprocessing.get_context("spawn")
     ) as executor:
@@ -198,6 +188,7 @@ def distribute_over_gpus():
                     device_id + 1,
                     sweep_config.seed,
                     sweep_config.writer,
+                    folder,
                     sweep_config.compute_openvino,
                 )
             )
@@ -205,35 +196,38 @@ def distribute_over_gpus():
             try:
                 job.result()
             except Exception as exc:
-                raise Exception(f"Error occurred while computing benchmark on device {job}") from exc
+                raise Exception(f"Error occurred while computing benchmark on GPU {job}") from exc
 
 
-def distribute():
+def distribute(config: Union[DictConfig, ListConfig]):
     """Run all cpu experiments on a single process. Distribute gpu experiments over all available gpus.
 
     Args:
-        device_count (int, optional): If device count is 0, uses only cpu else spawn processes according
-        to number of gpus available on the machine. Defaults to 0.
+        config: (Union[DictConfig, ListConfig]): Sweep configuration.
     """
-    sweep_config = OmegaConf.load("tools/benchmarking/benchmark_params.yaml")
-    devices = sweep_config.hardware
+
+    runs_folder = datetime.strftime(datetime.now(), "%Y_%m_%d-%H_%M_%S")
+    devices = config.hardware
     if not torch.cuda.is_available() and "gpu" in devices:
         pl_logger.warning("Config requested GPU benchmarking but torch could not detect any cuda enabled devices")
     elif {"cpu", "gpu"}.issubset(devices):
         # Create process for gpu and cpu
         with ProcessPoolExecutor(max_workers=2, mp_context=multiprocessing.get_context("spawn")) as executor:
-            jobs = [executor.submit(compute_on_cpu), executor.submit(distribute_over_gpus)]
+            jobs = [
+                executor.submit(compute_on_cpu, config, runs_folder),
+                executor.submit(distribute_over_gpus, config, runs_folder),
+            ]
             for job in as_completed(jobs):
                 try:
                     job.result()
                 except Exception as exception:
                     raise Exception(f"Error occurred while computing benchmark on device {job}") from exception
     elif "cpu" in devices:
-        compute_on_cpu()
+        compute_on_cpu(config, folder=runs_folder)
     elif "gpu" in devices:
-        distribute_over_gpus()
-    if "wandb" in sweep_config.writer:
-        upload_to_wandb(team="anomalib")
+        distribute_over_gpus(config, folder=runs_folder)
+    if "wandb" in config.writer:
+        upload_to_wandb(team="anomalib", folder=runs_folder)
 
 
 def sweep(
@@ -264,7 +258,16 @@ def sweep(
     model_config = update_input_size_config(model_config)
 
     # Set device in config. 0 - cpu, [0], [1].. - gpu id
-    model_config.trainer.gpus = 0 if device == 0 else [device - 1]
+    if device != 0:
+        model_config.trainer.devices = [device - 1]
+        model_config.trainer.accelerator = "gpu"
+    else:
+        model_config.trainer.accelerator = "cpu"
+
+    # Remove legacy flags
+    for legacy_device in ["num_processes", "gpus", "ipus", "tpu_cores"]:
+        if legacy_device in model_config.trainer:
+            model_config.trainer[legacy_device] = None
 
     if run_config.model_name in ["patchcore", "cflow"]:
         convert_openvino = False  # `torch.cdist` is not supported by onnx version 11
@@ -297,6 +300,11 @@ if __name__ == "__main__":
     # Spawn multiple processes one for cpu and rest for the number of gpus available in the system.
     # The idea is to distribute metrics collection over all the available devices.
 
-    logger.info("Benchmarking started 🏃‍♂️. This will take a while ⏲ depending on your configuration.")
-    distribute()
-    logger.info("Finished gathering results ⚡")
+    parser = ArgumentParser()
+    parser.add_argument("--config", type=Path, help="Path to sweep configuration")
+    _args = parser.parse_args()
+
+    print("Benchmarking started 🏃‍♂️. This will take a while ⏲ depending on your configuration.")
+    _sweep_config = OmegaConf.load(_args.config)
+    distribute(_sweep_config)
+    print("Finished gathering results ⚡")

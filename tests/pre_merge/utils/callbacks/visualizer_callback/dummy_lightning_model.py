@@ -9,7 +9,8 @@ from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
 from anomalib.models.components import AnomalyModule
-from anomalib.utils.callbacks.visualizer_callback import VisualizerCallback
+from anomalib.utils.callbacks import ImageVisualizerCallback
+from anomalib.utils.metrics import get_metrics
 
 
 class DummyDataset(Dataset):
@@ -28,8 +29,9 @@ class DummyDataModule(pl.LightningDataModule):
         return DataLoader(DummyDataset())
 
 
-class DummyAnomalyMapGenerator:
+class DummyAnomalyMapGenerator(nn.Module):
     def __init__(self):
+        super().__init__()
         self.input_size = (100, 100)
         self.sigma = 4
 
@@ -41,14 +43,26 @@ class DummyModel(nn.Module):
 
 
 class DummyModule(AnomalyModule):
-    """A dummy model which calls visualizer callback on fake images and
-    masks."""
+    """A dummy model which calls visualizer callback on fake images and masks."""
 
     def __init__(self, hparams: Union[DictConfig, ListConfig]):
-        super().__init__(hparams)
+        super().__init__()
         self.model = DummyModel()
         self.task = "segmentation"
-        self.callbacks = [VisualizerCallback(task=self.task)]  # test if this is removed
+        self.mode = "full"
+        self.callbacks = [
+            ImageVisualizerCallback(
+                task=self.task,
+                mode=self.mode,
+                image_save_path=hparams.project.path + "/images",
+                log_images=True,
+                save_images=True,
+            )
+        ]  # test if this is removed
+
+        self.image_metrics, self.pixel_metrics = get_metrics(hparams)
+        self.image_metrics.set_threshold(hparams.model.threshold.image_default)
+        self.pixel_metrics.set_threshold(hparams.model.threshold.pixel_default)
 
     def test_step(self, batch, _):
         """Only used to trigger on_test_epoch_end."""
@@ -59,6 +73,8 @@ class DummyModule(AnomalyModule):
             mask=torch.zeros((1, 100, 100)),
             anomaly_maps=torch.ones((1, 100, 100)),
             label=torch.Tensor([0]),
+            pred_labels=torch.Tensor([0]),
+            pred_masks=torch.zeros((1, 100, 100)),
         )
         return outputs
 

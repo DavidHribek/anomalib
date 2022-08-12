@@ -1,25 +1,13 @@
 """PyTorch model for the PaDiM model implementation."""
 
-# Copyright (C) 2020 Intel Corporation
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions
-# and limitations under the License.
+# Copyright (C) 2022 Intel Corporation
+# SPDX-License-Identifier: Apache-2.0
 
 from random import sample
 from typing import Dict, List, Optional, Tuple
 
 import torch
 import torch.nn.functional as F
-import torchvision
 from torch import Tensor, nn
 
 from anomalib.models.components import FeatureExtractor, MultiVariateGaussian
@@ -36,28 +24,25 @@ class PadimModel(nn.Module):
     """Padim Module.
 
     Args:
-        layers (List[str]): Layers used for feature extraction
         input_size (Tuple[int, int]): Input size for the model.
-        tile_size (Tuple[int, int]): Tile size
-        tile_stride (int): Stride for tiling
-        apply_tiling (bool, optional): Apply tiling. Defaults to False.
+        layers (List[str]): Layers used for feature extraction
         backbone (str, optional): Pre-trained model backbone. Defaults to "resnet18".
+        pre_trained (bool, optional): Boolean to check whether to use a pre_trained backbone.
     """
 
     def __init__(
         self,
-        layers: List[str],
         input_size: Tuple[int, int],
+        layers: List[str],
         backbone: str = "resnet18",
-        apply_tiling: bool = False,
-        tile_size: Optional[Tuple[int, int]] = None,
-        tile_stride: Optional[int] = None,
+        pre_trained: bool = True,
     ):
         super().__init__()
-        self.backbone = getattr(torchvision.models, backbone)
+        self.tiler: Optional[Tiler] = None
+
+        self.backbone = backbone
         self.layers = layers
-        self.apply_tiling = apply_tiling
-        self.feature_extractor = FeatureExtractor(backbone=self.backbone(pretrained=True), layers=self.layers)
+        self.feature_extractor = FeatureExtractor(backbone=self.backbone, layers=layers, pre_trained=pre_trained)
         self.dims = DIMS[backbone]
         # pylint: disable=not-callable
         # Since idx is randomly selected, save it with model to get same results
@@ -73,11 +58,6 @@ class PadimModel(nn.Module):
         patches_dims = torch.tensor(input_size) / DIMS[backbone]["emb_scale"]
         n_patches = patches_dims.ceil().prod().int().item()
         self.gaussian = MultiVariateGaussian(n_features, n_patches)
-
-        if apply_tiling:
-            assert tile_size is not None
-            assert tile_stride is not None
-            self.tiler = Tiler(tile_size, tile_stride)
 
     def forward(self, input_tensor: Tensor) -> Tensor:
         """Forward-pass image-batch (N, C, H, W) into model to extract features.
@@ -101,12 +81,14 @@ class PadimModel(nn.Module):
             torch.Size([32, 256, 14, 14])]
         """
 
-        if self.apply_tiling:
+        if self.tiler:
             input_tensor = self.tiler.tile(input_tensor)
+
         with torch.no_grad():
             features = self.feature_extractor(input_tensor)
             embeddings = self.generate_embedding(features)
-        if self.apply_tiling:
+
+        if self.tiler:
             embeddings = self.tiler.untile(embeddings)
 
         if self.training:
@@ -115,7 +97,6 @@ class PadimModel(nn.Module):
             output = self.anomaly_map_generator(
                 embedding=embeddings, mean=self.gaussian.mean, inv_covariance=self.gaussian.inv_covariance
             )
-
         return output
 
     def generate_embedding(self, features: Dict[str, Tensor]) -> Tensor:

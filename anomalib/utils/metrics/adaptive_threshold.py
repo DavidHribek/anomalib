@@ -1,4 +1,8 @@
 """Implementation of Optimal F1 score based on TorchMetrics."""
+
+# Copyright (C) 2022 Intel Corporation
+# SPDX-License-Identifier: Apache-2.0
+
 import torch
 from torchmetrics import Metric, PrecisionRecallCurve
 
@@ -10,10 +14,10 @@ class AdaptiveThreshold(Metric):
     predicted anomaly scores.
     """
 
-    def __init__(self, default_value: float, **kwargs):
+    def __init__(self, default_value: float = 0.5, **kwargs):
         super().__init__(**kwargs)
 
-        self.precision_recall_curve = PrecisionRecallCurve(num_classes=1, compute_on_step=False)
+        self.precision_recall_curve = PrecisionRecallCurve(num_classes=1)
         self.add_state("value", default=torch.tensor(default_value), persistent=True)  # pylint: disable=not-callable
         self.value = torch.tensor(default_value)  # pylint: disable=not-callable
 
@@ -44,3 +48,7 @@ class AdaptiveThreshold(Metric):
         else:
             self.value = thresholds[torch.argmax(f1_score)]
         return self.value
+
+    def reset(self) -> None:
+        """Reset the metric."""
+        self.precision_recall_curve.reset()

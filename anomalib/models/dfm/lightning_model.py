@@ -1,24 +1,14 @@
 """DFM: Deep Feature Kernel Density Estimation."""
 
-# Copyright (C) 2020 Intel Corporation
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions
-# and limitations under the License.
+# Copyright (C) 2022 Intel Corporation
+# SPDX-License-Identifier: Apache-2.0
 
 import logging
 from typing import List, Union
 
 import torch
 from omegaconf import DictConfig, ListConfig
+from pytorch_lightning.utilities.cli import MODEL_REGISTRY
 from torch import Tensor
 
 from anomalib.models.components import AnomalyModule
@@ -28,19 +18,40 @@ from .torch_model import DFMModel
 logger = logging.getLogger(__name__)
 
 
-class DfmLightning(AnomalyModule):
-    """DFM: Deep Featured Kernel Density Estimation."""
+@MODEL_REGISTRY
+class Dfm(AnomalyModule):
+    """DFM: Deep Featured Kernel Density Estimation.
 
-    def __init__(self, hparams: Union[DictConfig, ListConfig]):
-        super().__init__(hparams)
-        logger.info("Initializing DFKDE Lightning model.")
+    Args:
+        backbone (str): Backbone CNN network
+        layer (str): Layer to extract features from the backbone CNN
+        pre_trained (bool, optional): Boolean to check whether to use a pre_trained backbone.
+        pooling_kernel_size (int, optional): Kernel size to pool features extracted from the CNN.
+            Defaults to 4.
+        pca_level (float, optional): Ratio from which number of components for PCA are calculated.
+            Defaults to 0.97.
+        score_type (str, optional): Scoring type. Options are `fre` and `nll`. Defaults to "fre".
+        nll: for Gaussian modeling, fre: pca feature reconstruction error
+    """
+
+    def __init__(
+        self,
+        backbone: str,
+        layer: str,
+        pre_trained: bool = True,
+        pooling_kernel_size: int = 4,
+        pca_level: float = 0.97,
+        score_type: str = "fre",
+    ):
+        super().__init__()
 
         self.model: DFMModel = DFMModel(
-            backbone=hparams.model.backbone,
-            layer=hparams.model.layer,
-            pooling_kernel_size=hparams.model.pooling_kernel_size,
-            n_comps=hparams.model.pca_level,
-            score_type=hparams.model.score_type,
+            backbone=backbone,
+            pre_trained=pre_trained,
+            layer=layer,
+            pooling_kernel_size=pooling_kernel_size,
+            n_comps=pca_level,
+            score_type=score_type,
         )
         self.embeddings: List[Tensor] = []
 
@@ -94,3 +105,22 @@ class DfmLightning(AnomalyModule):
         batch["pred_scores"] = self.model(batch["image"])
 
         return batch
+
+
+class DfmLightning(Dfm):
+    """DFM: Deep Featured Kernel Density Estimation.
+
+    Args:
+        hparams (Union[DictConfig, ListConfig]): Model params
+    """
+
+    def __init__(self, hparams: Union[DictConfig, ListConfig]) -> None:
+        super().__init__(
+            backbone=hparams.model.backbone,
+            layer=hparams.model.layer,
+            pooling_kernel_size=hparams.model.pooling_kernel_size,
+            pca_level=hparams.model.pca_level,
+            score_type=hparams.model.score_type,
+        )
+        self.hparams: Union[DictConfig, ListConfig]  # type: ignore
+        self.save_hyperparameters(hparams)

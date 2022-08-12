@@ -1,18 +1,7 @@
 """Get configurable parameters."""
 
-# Copyright (C) 2020 Intel Corporation
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions
-# and limitations under the License.
+# Copyright (C) 2022 Intel Corporation
+# SPDX-License-Identifier: Apache-2.0
 
 # TODO: This would require a new design.
 # TODO: https://jira.devtools.intel.com/browse/IAAALD-149
@@ -64,6 +53,8 @@ def update_nncf_config(config: Union[DictConfig, ListConfig]) -> Union[DictConfi
     sample_size = (crop_size, crop_size) if isinstance(crop_size, int) else crop_size
     if "optimization" in config.keys():
         if "nncf" in config.optimization.keys():
+            if "input_info" not in config.optimization.nncf.keys():
+                config.optimization.nncf["input_info"] = {"sample_size": None}
             config.optimization.nncf.input_info.sample_size = [1, 3, *sample_size]
             if config.optimization.nncf.apply:
                 if "update_config" in config.optimization.nncf:
@@ -159,12 +150,13 @@ def get_configurable_parameters(
     config.trainer.default_root_dir = str(project_path)
 
     if weight_file:
-        config.model.weight_file = weight_file
+        config.trainer.resume_from_checkpoint = weight_file
 
     config = update_nncf_config(config)
 
     # thresholding
-    if "pixel_default" not in config.model.threshold.keys():
-        config.model.threshold.pixel_default = config.model.threshold.image_default
+    if "metrics" in config.keys():
+        if "pixel_default" not in config.metrics.threshold.keys():
+            config.metrics.threshold.pixel_default = config.metrics.threshold.image_default
 
     return config

@@ -1,19 +1,7 @@
 """Utilities for optimization and OpenVINO conversion."""
 
-# Copyright (C) 2020 Intel Corporation
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions
-# and limitations under the License.
-
+# Copyright (C) 2022 Intel Corporation
+# SPDX-License-Identifier: Apache-2.0
 
 import json
 import os
@@ -38,14 +26,14 @@ def get_model_metadata(model: AnomalyModule) -> Dict[str, Tensor]:
     """
     meta_data = {}
     cached_meta_data = {
-        "image_threshold": model.image_threshold.cpu().value,
-        "pixel_threshold": model.pixel_threshold.cpu().value,
+        "image_threshold": model.image_threshold.cpu().value.item(),
+        "pixel_threshold": model.pixel_threshold.cpu().value.item(),
         "pixel_mean": model.training_distribution.pixel_mean.cpu(),
         "image_mean": model.training_distribution.image_mean.cpu(),
         "pixel_std": model.training_distribution.pixel_std.cpu(),
         "image_std": model.training_distribution.image_std.cpu(),
-        "min": model.min_max.min.cpu(),
-        "max": model.min_max.max.cpu(),
+        "min": model.min_max.min.cpu().item(),
+        "max": model.min_max.max.cpu().item(),
     }
     # Remove undefined values by copying in a new dict
     for key, val in cached_meta_data.items():

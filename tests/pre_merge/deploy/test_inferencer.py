@@ -1,20 +1,8 @@
 """Tests for Torch and OpenVINO inferencers."""
 
-# Copyright (C) 2020 Intel Corporation
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions
-# and limitations under the License.
+# Copyright (C) 2022 Intel Corporation
+# SPDX-License-Identifier: Apache-2.0
 
-import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Union
@@ -28,6 +16,7 @@ from anomalib.config import get_configurable_parameters
 from anomalib.data import get_datamodule
 from anomalib.deploy import OpenVINOInferencer, TorchInferencer, export_convert
 from anomalib.models import get_model
+from anomalib.utils.callbacks import get_callbacks
 from tests.helpers.dataset import TestDataset, get_dataset_path
 from tests.helpers.inference import MockImageLoader, get_meta_data
 
@@ -48,7 +37,18 @@ def get_model_config(
 class TestInferencers:
     @pytest.mark.parametrize(
         "model_name",
-        ["padim", "stfpm", "patchcore", "dfm", "dfkde", "ganomaly", "cflow"],
+        [
+            "cflow",
+            "dfm",
+            "dfkde",
+            "draem",
+            "fastflow",
+            "ganomaly",
+            "padim",
+            "patchcore",
+            "reverse_distillation",
+            "stfpm",
+        ],
     )
     @TestDataset(num_train=20, num_test=1, path=get_dataset_path(), use_mvtec=False)
     def test_torch_inference(self, model_name: str, category: str = "shapes", path: str = "./datasets/MVTec"):
@@ -63,8 +63,9 @@ class TestInferencers:
             )
 
             model = get_model(model_config)
-            trainer = Trainer(logger=False, **model_config.trainer)
             datamodule = get_datamodule(model_config)
+            callbacks = get_callbacks(model_config)
+            trainer = Trainer(**model_config.trainer, logger=False, callbacks=callbacks)
 
             trainer.fit(model=model, datamodule=datamodule)
 
@@ -76,16 +77,11 @@ class TestInferencers:
             meta_data = get_meta_data(model, model_config.dataset.image_size)
             with torch.no_grad():
                 for image in torch_dataloader():
-                    torch_inferencer.predict(image, superimpose=False, meta_data=meta_data)
+                    torch_inferencer.predict(image, meta_data=meta_data)
 
     @pytest.mark.parametrize(
         "model_name",
-        [
-            "padim",
-            "stfpm",
-            "dfm",
-            "ganomaly",
-        ],
+        ["dfm", "draem", "ganomaly", "padim", "stfpm"],
     )
     @TestDataset(num_train=20, num_test=1, path=get_dataset_path(), use_mvtec=False)
     def test_openvino_inference(self, model_name: str, category: str = "shapes", path: str = "./datasets/MVTec"):
@@ -101,8 +97,10 @@ class TestInferencers:
             export_path = Path(project_path)
 
             model = get_model(model_config)
-            trainer = Trainer(logger=False, **model_config.trainer)
             datamodule = get_datamodule(model_config)
+            callbacks = get_callbacks(model_config)
+            trainer = Trainer(**model_config.trainer, logger=False, callbacks=callbacks)
+
             trainer.fit(model=model, datamodule=datamodule)
 
             export_convert(
@@ -117,4 +115,4 @@ class TestInferencers:
             openvino_dataloader = MockImageLoader(model_config.dataset.image_size, total_count=1)
             meta_data = get_meta_data(model, model_config.dataset.image_size)
             for image in openvino_dataloader():
-                openvino_inferencer.predict(image, superimpose=False, meta_data=meta_data)
+                openvino_inferencer.predict(image, meta_data=meta_data)

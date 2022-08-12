@@ -4,19 +4,8 @@ This module contains `PreProcessor` class that applies preprocessing
 to an input image before the forward-pass stage.
 """
 
-# Copyright (C) 2020 Intel Corporation
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions
-# and limitations under the License.
+# Copyright (C) 2022 Intel Corporation
+# SPDX-License-Identifier: Apache-2.0
 
 from typing import Optional, Tuple, Union
 
@@ -103,13 +92,7 @@ class PreProcessor:
         transforms: A.Compose
 
         if self.config is None and self.image_size is not None:
-            if isinstance(self.image_size, int):
-                height, width = self.image_size, self.image_size
-            elif isinstance(self.image_size, tuple):
-                height, width = self.image_size
-            else:
-                raise ValueError("``image_size`` could be either int or Tuple[int, int]")
-
+            height, width = self._get_height_and_width()
             transforms = A.Compose(
                 [
                     A.Resize(height=height, width=width, always_apply=True),
@@ -130,8 +113,23 @@ class PreProcessor:
             if isinstance(transforms[-1], ToTensorV2):
                 transforms = A.Compose(transforms[:-1])
 
+        # always resize to specified image size
+        if not any(isinstance(transform, A.Resize) for transform in transforms) and self.image_size is not None:
+            height, width = self._get_height_and_width()
+            transforms = A.Compose([A.Resize(height=height, width=width, always_apply=True), transforms])
+
         return transforms
 
     def __call__(self, *args, **kwargs):
         """Return transformed arguments."""
         return self.transforms(*args, **kwargs)
+
+    def _get_height_and_width(self) -> Tuple[Optional[int], Optional[int]]:
+        """Extract height and width from image size attribute."""
+        if isinstance(self.image_size, int):
+            return self.image_size, self.image_size
+        if isinstance(self.image_size, tuple):
+            return int(self.image_size[0]), int(self.image_size[1])
+        if self.image_size is None:
+            return None, None
+        raise ValueError("``image_size`` could be either int or Tuple[int, int]")

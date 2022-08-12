@@ -1,65 +1,54 @@
 """Base Anomaly Module for Training Task."""
 
-# Copyright (C) 2020 Intel Corporation
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions
-# and limitations under the License.
+# Copyright (C) 2022 Intel Corporation
+# SPDX-License-Identifier: Apache-2.0
 
+import logging
 from abc import ABC
-from typing import Any, List, Optional, Union
+from typing import Any, List, Optional
 
 import pytorch_lightning as pl
-from omegaconf import DictConfig, ListConfig
 from pytorch_lightning.callbacks.base import Callback
 from torch import Tensor, nn
 
 from anomalib.utils.metrics import (
     AdaptiveThreshold,
+    AnomalibMetricCollection,
     AnomalyScoreDistribution,
     MinMax,
-    get_metrics,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class AnomalyModule(pl.LightningModule, ABC):
     """AnomalyModule to train, validate, predict and test images.
 
     Acts as a base class for all the Anomaly Modules in the library.
-
-    Args:
-        params (Union[DictConfig, ListConfig]): Configuration
     """
 
-    def __init__(self, params: Union[DictConfig, ListConfig]):
-
+    def __init__(self):
         super().__init__()
-        # Force the type for hparams so that it works with OmegaConfig style of accessing
-        self.hparams: Union[DictConfig, ListConfig]  # type: ignore
-        self.save_hyperparameters(params)
+        logger.info("Initializing %s model.", self.__class__.__name__)
+
+        self.save_hyperparameters()
+        self.model: nn.Module
         self.loss: Tensor
         self.callbacks: List[Callback]
 
-        self.image_threshold = AdaptiveThreshold(self.hparams.model.threshold.image_default).cpu()
-        self.pixel_threshold = AdaptiveThreshold(self.hparams.model.threshold.pixel_default).cpu()
+        self.adaptive_threshold: bool
+
+        self.image_threshold = AdaptiveThreshold().cpu()
+        self.pixel_threshold = AdaptiveThreshold().cpu()
 
         self.training_distribution = AnomalyScoreDistribution().cpu()
         self.min_max = MinMax().cpu()
 
-        self.model: nn.Module
-
-        # metrics
-        self.image_metrics, self.pixel_metrics = get_metrics(self.hparams)
-        self.image_metrics.set_threshold(self.hparams.model.threshold.image_default)
-        self.pixel_metrics.set_threshold(self.hparams.model.threshold.pixel_default)
+        # Create placeholders for image and pixel metrics.
+        # If set from the config file, MetricsConfigurationCallback will
+        #   create the metric collections upon setup.
+        self.image_metrics: AnomalibMetricCollection
+        self.pixel_metrics: AnomalibMetricCollection
 
     def forward(self, batch):  # pylint: disable=arguments-differ
         """Forward-pass input tensor to the module.
@@ -108,7 +97,7 @@ class AnomalyModule(pl.LightningModule, ABC):
           Dictionary containing images, features, true labels and masks.
           These are required in `validation_epoch_end` for feature concatenation.
         """
-        return self.validation_step(batch, _)
+        return self.predict_step(batch, _)
 
     def validation_step_end(self, val_step_outputs):  # pylint: disable=arguments-differ
         """Called at the end of each validation step."""
@@ -128,7 +117,7 @@ class AnomalyModule(pl.LightningModule, ABC):
         Args:
           outputs: Batch of outputs from the validation step
         """
-        if self.hparams.model.threshold.adaptive:
+        if self.adaptive_threshold:
             self._compute_adaptive_threshold(outputs)
         self._collect_outputs(self.image_metrics, self.pixel_metrics, outputs)
         self._log_metrics()
@@ -159,7 +148,7 @@ class AnomalyModule(pl.LightningModule, ABC):
             image_metric.update(output["pred_scores"], output["label"].int())
             if "mask" in output.keys() and "anomaly_maps" in output.keys():
                 pixel_metric.cpu()
-                pixel_metric.update(output["anomaly_maps"].flatten(), output["mask"].flatten().int())
+                pixel_metric.update(output["anomaly_maps"], output["mask"].int())
 
     def _post_process(self, outputs):
         """Compute labels based on model predictions."""
@@ -176,6 +165,8 @@ class AnomalyModule(pl.LightningModule, ABC):
 
     def _log_metrics(self):
         """Log computed performance metrics."""
-        self.log_dict(self.image_metrics)
         if self.pixel_metrics.update_called:
-            self.log_dict(self.pixel_metrics)
+            self.log_dict(self.pixel_metrics, prog_bar=True)
+            self.log_dict(self.image_metrics, prog_bar=False)
+        else:
+            self.log_dict(self.image_metrics, prog_bar=True)

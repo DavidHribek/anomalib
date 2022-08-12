@@ -6,22 +6,12 @@ If the dataset is not on the file system, the script downloads and
 extracts the dataset and create PyTorch data objects.
 """
 
-# Copyright (C) 2020 Intel Corporation
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions
-# and limitations under the License.
+# Copyright (C) 2022 Intel Corporation
+# SPDX-License-Identifier: Apache-2.0
 
 import logging
 import shutil
+import warnings
 import zipfile
 from pathlib import Path
 from typing import Dict, Optional, Tuple, Union
@@ -33,6 +23,7 @@ import numpy as np
 import pandas as pd
 from pandas.core.frame import DataFrame
 from pytorch_lightning.core.datamodule import LightningDataModule
+from pytorch_lightning.utilities.cli import DATAMODULE_REGISTRY
 from pytorch_lightning.utilities.types import EVAL_DATALOADERS, TRAIN_DATALOADERS
 from torch import Tensor
 from torch.utils.data import DataLoader
@@ -55,7 +46,7 @@ def make_btech_dataset(
     path: Path,
     split: Optional[str] = None,
     split_ratio: float = 0.1,
-    seed: int = 0,
+    seed: Optional[int] = None,
     create_validation_set: bool = False,
 ) -> DataFrame:
     """Create BTech samples by parsing the BTech data file structure.
@@ -141,7 +132,7 @@ def make_btech_dataset(
     return samples
 
 
-class BTech(VisionDataset):
+class BTechDataset(VisionDataset):
     """BTech PyTorch Dataset."""
 
     def __init__(
@@ -151,7 +142,7 @@ class BTech(VisionDataset):
         pre_process: PreProcessor,
         split: str,
         task: str = "segmentation",
-        seed: int = 0,
+        seed: Optional[int] = None,
         create_validation_set: bool = False,
     ) -> None:
         """Btech Dataset class.
@@ -166,10 +157,10 @@ class BTech(VisionDataset):
             create_validation_set: Create a validation subset in addition to the train and test subsets
 
         Examples:
-            >>> from anomalib.data.btech import BTech
+            >>> from anomalib.data.btech import BTechDataset
             >>> from anomalib.data.transforms import PreProcessor
             >>> pre_process = PreProcessor(image_size=256)
-            >>> dataset = BTech(
+            >>> dataset = BTechDataset(
             ...     root='./datasets/BTech',
             ...     category='leather',
             ...     pre_process=pre_process,
@@ -196,6 +187,14 @@ class BTech(VisionDataset):
             (torch.Size([3, 256, 256]), torch.Size([256, 256]))
         """
         super().__init__(root)
+
+        if seed is None:
+            warnings.warn(
+                "seed is None."
+                " When seed is not set, images from the normal directory are split between training and test dir."
+                " This will lead to inconsistency between runs."
+            )
+
         self.root = Path(root) if isinstance(root, str) else root
         self.category: str = category
         self.split = split
@@ -257,7 +256,8 @@ class BTech(VisionDataset):
         return item
 
 
-class BTechDataModule(LightningDataModule):
+@DATAMODULE_REGISTRY
+class BTech(LightningDataModule):
     """BTechDataModule Lightning Data Module."""
 
     def __init__(
@@ -272,7 +272,7 @@ class BTechDataModule(LightningDataModule):
         task: str = "segmentation",
         transform_config_train: Optional[Union[str, A.Compose]] = None,
         transform_config_val: Optional[Union[str, A.Compose]] = None,
-        seed: int = 0,
+        seed: Optional[int] = None,
         create_validation_set: bool = False,
     ) -> None:
         """Instantiate BTech Lightning Data Module.
@@ -291,8 +291,8 @@ class BTechDataModule(LightningDataModule):
             create_validation_set: Create a validation subset in addition to the train and test subsets
 
         Examples
-            >>> from anomalib.data import BTechDataModule
-            >>> datamodule = BTechDataModule(
+            >>> from anomalib.data import BTech
+            >>> datamodule = BTech(
             ...     root="./datasets/BTech",
             ...     category="leather",
             ...     image_size=256,
@@ -398,7 +398,7 @@ class BTechDataModule(LightningDataModule):
         """
         logger.info("Setting up train, validation, test and prediction datasets.")
         if stage in (None, "fit"):
-            self.train_data = BTech(
+            self.train_data = BTechDataset(
                 root=self.root,
                 category=self.category,
                 pre_process=self.pre_process_train,
@@ -409,7 +409,7 @@ class BTechDataModule(LightningDataModule):
             )
 
         if self.create_validation_set:
-            self.val_data = BTech(
+            self.val_data = BTechDataset(
                 root=self.root,
                 category=self.category,
                 pre_process=self.pre_process_val,
@@ -419,7 +419,7 @@ class BTechDataModule(LightningDataModule):
                 create_validation_set=self.create_validation_set,
             )
 
-        self.test_data = BTech(
+        self.test_data = BTechDataset(
             root=self.root,
             category=self.category,
             pre_process=self.pre_process_val,

@@ -1,24 +1,13 @@
 """DFKDE: Deep Feature Kernel Density Estimation."""
 
-# Copyright (C) 2020 Intel Corporation
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions
-# and limitations under the License.
+# Copyright (C) 2022 Intel Corporation
+# SPDX-License-Identifier: Apache-2.0
 
 import logging
 from typing import List, Union
 
-from omegaconf.dictconfig import DictConfig
-from omegaconf.listconfig import ListConfig
+from omegaconf import DictConfig, ListConfig
+from pytorch_lightning.utilities.cli import MODEL_REGISTRY
 from torch import Tensor
 
 from anomalib.models.components import AnomalyModule
@@ -28,22 +17,43 @@ from .torch_model import DfkdeModel
 logger = logging.getLogger(__name__)
 
 
-class DfkdeLightning(AnomalyModule):
+@MODEL_REGISTRY
+class Dfkde(AnomalyModule):
     """DFKDE: Deep Feature Kernel Density Estimation.
 
     Args:
-        hparams (Union[DictConfig, ListConfig]): Model params
+        backbone (str): Pre-trained model backbone.
+        pre_trained (bool, optional): Boolean to check whether to use a pre_trained backbone.
+        max_training_points (int, optional): Number of training points to fit the KDE model.
+            Defaults to 40000.
+        pre_processing (str, optional): Preprocess features before passing to KDE.
+            Options are between `norm` and `scale`. Defaults to "scale".
+        n_components (int, optional): Number of PCA components. Defaults to 16.
+        threshold_steepness (float, optional): Controls how quickly the value saturates around zero.
+            Defaults to 0.05.
+        threshold_offset (float, optional): Offset of the density function from 0. Defaults to 12.0.
     """
 
-    def __init__(self, hparams: Union[DictConfig, ListConfig]):
-        super().__init__(hparams)
-        logger.info("Initializing DFKDE Lightning model.")
-        threshold_steepness = 0.05
-        threshold_offset = 12
+    def __init__(
+        self,
+        layers: List[str],
+        backbone: str,
+        pre_trained: bool = True,
+        max_training_points: int = 40000,
+        pre_processing: str = "scale",
+        n_components: int = 16,
+        threshold_steepness: float = 0.05,
+        threshold_offset: int = 12,
+    ):
+        super().__init__()
 
         self.model = DfkdeModel(
-            backbone=hparams.model.backbone,
-            filter_count=hparams.model.max_training_points,
+            layers=layers,
+            backbone=backbone,
+            pre_trained=pre_trained,
+            n_comps=n_components,
+            pre_processing=pre_processing,
+            filter_count=max_training_points,
             threshold_steepness=threshold_steepness,
             threshold_offset=threshold_offset,
         )
@@ -96,3 +106,24 @@ class DfkdeLightning(AnomalyModule):
         batch["pred_scores"] = self.model(batch["image"])
 
         return batch
+
+
+class DfkdeLightning(Dfkde):
+    """DFKDE: Deep Feature Kernel Density Estimation.
+
+    Args:
+        hparams (Union[DictConfig, ListConfig]): Model params
+    """
+
+    def __init__(self, hparams: Union[DictConfig, ListConfig]) -> None:
+        super().__init__(
+            layers=hparams.model.layers,
+            backbone=hparams.model.backbone,
+            max_training_points=hparams.model.max_training_points,
+            pre_processing=hparams.model.pre_processing,
+            n_components=hparams.model.n_components,
+            threshold_steepness=hparams.model.threshold_steepness,
+            threshold_offset=hparams.model.threshold_offset,
+        )
+        self.hparams: Union[DictConfig, ListConfig]  # type: ignore
+        self.save_hyperparameters(hparams)

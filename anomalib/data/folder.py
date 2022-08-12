@@ -3,19 +3,8 @@
 This script creates a custom dataset from a folder.
 """
 
-# Copyright (C) 2020 Intel Corporation
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions
-# and limitations under the License.
+# Copyright (C) 2022 Intel Corporation
+# SPDX-License-Identifier: Apache-2.0
 
 import logging
 import warnings
@@ -27,6 +16,7 @@ import cv2
 import numpy as np
 from pandas.core.frame import DataFrame
 from pytorch_lightning.core.datamodule import LightningDataModule
+from pytorch_lightning.utilities.cli import DATAMODULE_REGISTRY
 from pytorch_lightning.utilities.types import EVAL_DATALOADERS, TRAIN_DATALOADERS
 from torch import Tensor
 from torch.utils.data import DataLoader, Dataset
@@ -94,7 +84,7 @@ def make_dataset(
     mask_dir: Optional[Union[str, Path]] = None,
     split: Optional[str] = None,
     split_ratio: float = 0.2,
-    seed: int = 0,
+    seed: Optional[int] = None,
     create_validation_set: bool = True,
     extensions: Optional[Tuple[str, ...]] = None,
 ):
@@ -190,7 +180,7 @@ class FolderDataset(Dataset):
         mask_dir: Optional[Union[Path, str]] = None,
         extensions: Optional[Tuple[str, ...]] = None,
         task: Optional[str] = None,
-        seed: int = 0,
+        seed: Optional[int] = None,
         create_validation_set: bool = False,
     ) -> None:
         """Create Folder Folder Dataset.
@@ -301,7 +291,8 @@ class FolderDataset(Dataset):
         return item
 
 
-class FolderDataModule(LightningDataModule):
+@DATAMODULE_REGISTRY
+class Folder(LightningDataModule):
     """Folder Lightning Data Module."""
 
     def __init__(
@@ -314,7 +305,7 @@ class FolderDataModule(LightningDataModule):
         mask_dir: Optional[Union[Path, str]] = None,
         extensions: Optional[Tuple[str, ...]] = None,
         split_ratio: float = 0.2,
-        seed: int = 0,
+        seed: Optional[int] = None,
         image_size: Optional[Union[int, Tuple[int, int]]] = None,
         train_batch_size: int = 32,
         test_batch_size: int = 32,
@@ -359,8 +350,8 @@ class FolderDataModule(LightningDataModule):
 
         Examples:
             Assume that we use Folder Dataset for the MVTec/bottle/broken_large category. We would do:
-            >>> from anomalib.data import FolderDataModule
-            >>> datamodule = FolderDataModule(
+            >>> from anomalib.data import Folder
+            >>> datamodule = Folder(
             ...     root="./datasets/MVTec/bottle/test",
             ...     normal="good",
             ...     abnormal="broken_large",
@@ -379,7 +370,7 @@ class FolderDataModule(LightningDataModule):
             The dataset expects that mask annotation filenames must be same as the original filename.
             To this end, we modified mask filenames in MVTec AD bottle category.
             Now we could try folder data module using the mvtec bottle broken large category
-            >>> datamodule = FolderDataModule(
+            >>> datamodule = Folder(
             ...     root="./datasets/bottle/test",
             ...     normal="good",
             ...     abnormal="broken_large",
@@ -401,7 +392,7 @@ class FolderDataModule(LightningDataModule):
             By default, Folder Data Module does not create a validation set. If a validation set
             is needed it could be set as follows:
 
-            >>> datamodule = FolderDataModule(
+            >>> datamodule = Folder(
             ...     root="./datasets/bottle/test",
             ...     normal="good",
             ...     abnormal="broken_large",
@@ -422,6 +413,13 @@ class FolderDataModule(LightningDataModule):
 
         """
         super().__init__()
+
+        if seed is None and normal_test_dir is None:
+            raise ValueError(
+                "Both seed and normal_test_dir cannot be None."
+                " When seed is not set, images from the normal directory are split between training and test dir."
+                " This will lead to inconsistency between runs."
+            )
 
         self.root = _check_and_convert_path(root)
         self.normal_dir = self.root / normal_dir

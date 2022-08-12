@@ -7,7 +7,7 @@ dataset:
   image_size: 256
   train_batch_size: 32
   test_batch_size: 32
-  num_workers: 36
+  num_workers: 8
   transform_config:
     train: null
     val: null
@@ -23,15 +23,12 @@ dataset:
 model:
   name: padim
   backbone: resnet18
+  pre_trained: true
   layers:
     - layer1
     - layer2
     - layer3
   normalization_method: min_max # options: [none, min_max, cdf]
-  threshold:
-    image_default: 3
-    pixel_default: 3
-    adaptive: true
 
 metrics:
   image:
@@ -40,12 +37,25 @@ metrics:
   pixel:
     - F1Score
     - AUROC
+  threshold:
+    image_default: 3
+    pixel_default: 3
+    adaptive: true
+
+visualization:
+  show_images: False # show images on the screen
+  save_images: True # save images to the file system
+  log_images: True # log images to the available loggers (if any)
+  image_save_path: null # path to which images will be saved
+  mode: full # options: ["full", "simple"]
 
 project:
   seed: 42
   path: ./results
-  log_images_to: ["local"]
-  logger: false # options: [tensorboard, wandb, csv] or combinations.
+
+logging:
+  logger: [] # options: [tensorboard, wandb, csv] or combinations.
+  log_graph: false # Logs the model graph to respective logger.
 
 optimization:
   openvino:

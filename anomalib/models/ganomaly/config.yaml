@@ -8,7 +8,7 @@ dataset:
   train_batch_size: 32
   test_batch_size: 32
   inference_batch_size: 32
-  num_workers: 32
+  num_workers: 8
   transform_config:
     train: null
     val: null
@@ -37,23 +37,30 @@ model:
   wadv: 1
   wcon: 50
   wenc: 1
-  threshold:
-    image_default: 0
-    adaptive: true
+  normalization_method: none
 
 metrics:
   image:
     - F1Score
     - AUROC
-  pixel:
-    - F1Score
-    - AUROC
+  threshold:
+    image_default: 0
+    adaptive: true
+
+visualization:
+  show_images: False # show images on the screen
+  save_images: True # save images to the file system
+  log_images: True # log images to the available loggers (if any)
+  image_save_path: null # path to which images will be saved
+  mode: full # options: ["full", "simple"]
 
 project:
-  seed: 0
+  seed: 42
   path: ./results
-  log_images_to: []
-  logger: false # options: [tensorboard, wandb, csv] or combinations.
+
+logging:
+  logger: [] # options: [tensorboard, wandb, csv] or combinations.
+  log_graph: false # Logs the model graph to respective logger.
 
 optimization:
   openvino:

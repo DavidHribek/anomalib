@@ -3,25 +3,15 @@
 Paper https://arxiv.org/abs/2011.08785
 """
 
-# Copyright (C) 2020 Intel Corporation
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions
-# and limitations under the License.
+# Copyright (C) 2022 Intel Corporation
+# SPDX-License-Identifier: Apache-2.0
 
 import logging
-from typing import List, Union
+from typing import List, Tuple, Union
 
 import torch
 from omegaconf import DictConfig, ListConfig
+from pytorch_lightning.utilities.cli import MODEL_REGISTRY
 from torch import Tensor
 
 from anomalib.models.components import AnomalyModule
@@ -29,28 +19,35 @@ from anomalib.models.padim.torch_model import PadimModel
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["PadimLightning"]
+__all__ = ["Padim", "PadimLightning"]
 
 
-class PadimLightning(AnomalyModule):
+@MODEL_REGISTRY
+class Padim(AnomalyModule):
     """PaDiM: a Patch Distribution Modeling Framework for Anomaly Detection and Localization.
 
     Args:
-        hparams (Union[DictConfig, ListConfig]): Model params
+        layers (List[str]): Layers to extract features from the backbone CNN
+        input_size (Tuple[int, int]): Size of the model input.
+        backbone (str): Backbone CNN network
+        pre_trained (bool, optional): Boolean to check whether to use a pre_trained backbone.
     """
 
-    def __init__(self, hparams: Union[DictConfig, ListConfig]):
-        super().__init__(hparams)
-        logger.info("Initializing Padim Lightning model.")
+    def __init__(
+        self,
+        layers: List[str],
+        input_size: Tuple[int, int],
+        backbone: str,
+        pre_trained: bool = True,
+    ):
+        super().__init__()
 
-        self.layers = hparams.model.layers
+        self.layers = layers
         self.model: PadimModel = PadimModel(
-            layers=hparams.model.layers,
-            input_size=hparams.model.input_size,
-            tile_size=hparams.dataset.tiling.tile_size,
-            tile_stride=hparams.dataset.tiling.stride,
-            apply_tiling=hparams.dataset.tiling.apply,
-            backbone=hparams.model.backbone,
+            input_size=input_size,
+            backbone=backbone,
+            pre_trained=pre_trained,
+            layers=layers,
         ).eval()
 
         self.stats: List[Tensor] = []
@@ -107,3 +104,20 @@ class PadimLightning(AnomalyModule):
 
         batch["anomaly_maps"] = self.model(batch["image"])
         return batch
+
+
+class PadimLightning(Padim):
+    """PaDiM: a Patch Distribution Modeling Framework for Anomaly Detection and Localization.
+
+    Args:
+        hparams (Union[DictConfig, ListConfig]): Model params
+    """
+
+    def __init__(self, hparams: Union[DictConfig, ListConfig]):
+        super().__init__(
+            input_size=hparams.model.input_size,
+            layers=hparams.model.layers,
+            backbone=hparams.model.backbone,
+        )
+        self.hparams: Union[DictConfig, ListConfig]  # type: ignore
+        self.save_hyperparameters(hparams)
