@@ -21,14 +21,15 @@ from typing import Dict, List, Optional, Union, cast
 import torch
 from omegaconf import DictConfig, ListConfig, OmegaConf
 from pytorch_lightning import Trainer, seed_everything
-from utils import convert_to_openvino, upload_to_wandb, write_metrics
+from utils import upload_to_comet, upload_to_wandb, write_metrics
 
 from anomalib.config import get_configurable_parameters, update_input_size_config
 from anomalib.data import get_datamodule
+from anomalib.deploy import export
+from anomalib.deploy.export import ExportMode
 from anomalib.models import get_model
 from anomalib.utils.loggers import configure_logger
 from anomalib.utils.sweep import (
-    get_meta_data,
     get_openvino_throughput,
     get_run_config,
     get_sweep_callbacks,
@@ -108,9 +109,7 @@ def get_single_model_metrics(model_config: Union[DictConfig, ListConfig], openvi
         # get testing time
         testing_time = time.time() - start_time
 
-        meta_data = get_meta_data(model, model_config.model.input_size)
-
-        throughput = get_torch_throughput(model_config, model, datamodule.test_dataloader().dataset, meta_data)
+        throughput = get_torch_throughput(model_config, model, datamodule.test_dataloader().dataset)
 
         # Get OpenVINO metrics
         openvino_throughput = float("nan")
@@ -118,9 +117,9 @@ def get_single_model_metrics(model_config: Union[DictConfig, ListConfig], openvi
             # Create dirs for openvino model export
             openvino_export_path = project_path / Path("exported_models")
             openvino_export_path.mkdir(parents=True, exist_ok=True)
-            convert_to_openvino(model, openvino_export_path, model_config.model.input_size)
+            export(model, model_config.model.input_size, ExportMode.OPENVINO, openvino_export_path)
             openvino_throughput = get_openvino_throughput(
-                model_config, openvino_export_path, datamodule.test_dataloader().dataset, meta_data
+                model_config, openvino_export_path, datamodule.test_dataloader().dataset
             )
 
         # arrange the data
@@ -228,6 +227,8 @@ def distribute(config: Union[DictConfig, ListConfig]):
         distribute_over_gpus(config, folder=runs_folder)
     if "wandb" in config.writer:
         upload_to_wandb(team="anomalib", folder=runs_folder)
+    if "comet" in config.writer:
+        upload_to_comet(folder=runs_folder)
 
 
 def sweep(

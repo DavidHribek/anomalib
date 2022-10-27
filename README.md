@@ -14,10 +14,12 @@
 [![python](https://img.shields.io/badge/python-3.7%2B-green)]()
 [![pytorch](https://img.shields.io/badge/pytorch-1.8.1%2B-orange)]()
 [![openvino](https://img.shields.io/badge/openvino-2021.4.2-purple)]()
+[![comet](https://custom-icon-badges.herokuapp.com/badge/comet__ml-3.31.7-orange?logo=logo_comet_ml)](https://www.comet.com/site/products/ml-experiment-tracking/?utm_source=anomalib&utm_medium=referral)
 [![Codacy Badge](https://app.codacy.com/project/badge/Grade/684927c1c76c4c5e94bb53480812fbbb)](https://www.codacy.com/gh/openvinotoolkit/anomalib/dashboard?utm_source=github.com&utm_medium=referral&utm_content=openvinotoolkit/anomalib&utm_campaign=Badge_Grade)
 [![black](https://img.shields.io/badge/code%20style-black-000000.svg)]()
 [![Nightly-Regression Test](https://github.com/openvinotoolkit/anomalib/actions/workflows/nightly.yml/badge.svg)](https://github.com/openvinotoolkit/anomalib/actions/workflows/nightly.yml)
 [![Pre-Merge Checks](https://github.com/openvinotoolkit/anomalib/actions/workflows/pre_merge.yml/badge.svg)](https://github.com/openvinotoolkit/anomalib/actions/workflows/pre_merge.yml)
+[![Codacy Badge](https://app.codacy.com/project/badge/Coverage/684927c1c76c4c5e94bb53480812fbbb)](https://www.codacy.com/gh/openvinotoolkit/anomalib/dashboard?utm_source=github.com&utm_medium=referral&utm_content=openvinotoolkit/anomalib&utm_campaign=Badge_Coverage)
 [![Docs](https://github.com/openvinotoolkit/anomalib/actions/workflows/docs.yml/badge.svg)](https://github.com/openvinotoolkit/anomalib/actions/workflows/docs.yml)
 [![Downloads](https://static.pepy.tech/personalized-badge/anomalib?period=total&units=international_system&left_color=grey&right_color=green&left_text=PyPI%20Downloads)](https://pepy.tech/project/anomalib)
 
@@ -76,7 +78,7 @@ pip install -e .
 
 ## ⚠️ Anomalib < v.0.4.0
 
-By default [`python tools/train.py`](https://gitlab-icv.inn.intel.com/algo_rnd_team/anomaly/-/blob/main/train.py)
+By default [`python tools/train.py`](https://github.com/openvinotoolkit/anomalib/blob/main/tools/train.py)
 runs [PADIM](https://arxiv.org/abs/2011.08785) model on `leather` category from the [MVTec AD](https://www.mvtec.com/company/research/datasets/mvtec-ad) [(CC BY-NC-SA 4.0)](https://creativecommons.org/licenses/by-nc-sa/4.0/) dataset.
 
 ```bash
@@ -84,7 +86,7 @@ python tools/train.py    # Train PADIM on MVTec AD leather
 ```
 
 Training a model on a specific dataset and category requires further configuration. Each model has its own configuration
-file, [`config.yaml`](https://gitlab-icv.inn.intel.com/algo_rnd_team/anomaly/-/blob/main/padim/anomalib/models/padim/config.yaml)
+file, [`config.yaml`](https://github.com/openvinotoolkit/anomalib/blob/main/configs/model/padim.yaml)
 , which contains data, model and training configurable parameters. To train a specific model on a specific dataset and
 category, the config file is to be provided:
 
@@ -114,6 +116,40 @@ where the currently available models are:
 - [PADIM](anomalib/models/padim)
 - [STFPM](anomalib/models/stfpm)
 - [GANomaly](anomalib/models/ganomaly)
+
+## Feature extraction & (pre-trained) backbones
+
+The pre-trained backbones come from [PyTorch Image Models (timm)](https://github.com/rwightman/pytorch-image-models), which are wrapped by `FeatureExtractor`.
+
+For more information, please check our documentation or the [section about feature extraction in "Getting Started with PyTorch Image Models (timm): A Practitioner’s Guide"](https://towardsdatascience.com/getting-started-with-pytorch-image-models-timm-a-practitioners-guide-4e77b4bf9055#b83b:~:text=ready%20to%20train!-,Feature%20Extraction,-timm%20models%20also>).
+
+Tips:
+
+- Papers With Code has an interface to easily browse models available in timm: [https://paperswithcode.com/lib/timm](https://paperswithcode.com/lib/timm)
+
+- You can also find them with the function `timm.list_models("resnet*", pretrained=True)`
+
+The backbone can be set in the config file, two examples below.
+
+Anomalib < v.0.4.0
+
+```yaml
+model:
+  name: cflow
+  backbone: wide_resnet50_2
+  pre_trained: true
+Anomalib > v.0.4.0 Beta - Subject to Change
+```
+
+Anomalib >= v.0.4.0
+
+```yaml
+model:
+  class_path: anomalib.models.Cflow
+  init_args:
+    backbone: wide_resnet50_2
+    pre_trained: true
+```
 
 ## Custom Dataset
 
@@ -186,14 +222,6 @@ python tools/inference/lightning_inference.py \
     --output results/padim/mvtec/bottle/images
 ```
 
-If you want to run OpenVINO model, ensure that `openvino` `apply` is set to `True` in the respective model `config.yaml`.
-
-```yaml
-optimization:
-  openvino:
-    apply: true
-```
-
 Example OpenVINO Inference:
 
 ```bash
@@ -215,6 +243,17 @@ A quick example:
 python tools/inference/gradio_inference.py \
         --config ./anomalib/models/padim/config.yaml \
         --weights ./results/padim/mvtec/bottle/weights/model.ckpt
+```
+
+## Exporting Model to ONNX or OpenVINO IR
+
+It is possible to export your model to ONNX or OpenVINO IR
+
+If you want to export your PyTorch model to an OpenVINO model, ensure that `export_mode` is set to `"openvino"` in the respective model `config.yaml`.
+
+```yaml
+optimization:
+  export_mode: "openvino" # options: openvino, onnx
 ```
 
 # Hyperparameter Optimization
@@ -240,19 +279,25 @@ python tools/benchmarking/benchmark.py \
 
 Refer to the [Benchmarking Documentation](https://openvinotoolkit.github.io/anomalib/guides/benchmarking.html) for more details.
 
-# Logging Images
+# Experiment Management
 
-You can save images locally or to a logger such TensorBoard or Weights and Biases by setting the following configuration.
+Anomablib is integrated with various libraries for experiment tracking such as Comet, tensorboard, and wandb through [pytorch lighting loggers](https://pytorch-lightning.readthedocs.io/en/stable/extensions/logging.html).
+
+Below is an example of how to enable logging for hyper-parameters, metrics, model graphs, and predictions on images in the test data-set
 
 ```yaml
-logging:
-  logger: [tensorboard, wandb]
-  log_graph: false
+visualization:
+  log_images: True # log images to the available loggers (if any)
+  mode: full # options: ["full", "simple"]
+
+ logging:
+  logger: [comet, tensorboard, wandb]
+  log_graph: True
 ```
 
-For more information on logging images, refer to the [Logging Documentation](https://openvinotoolkit.github.io/anomalib/guides/logging.html)
+For more information, refer to the [Logging Documentation](https://openvinotoolkit.github.io/anomalib/guides/logging.html)
 
----
+Note: Set your API Key for [Comet.ml](https://www.comet.com/signup?utm_source=anomalib&utm_medium=referral) via `comet_ml.init()` in interactive python or simply run `export COMET_API_KEY=<Your API Key>`
 
 # Datasets
 

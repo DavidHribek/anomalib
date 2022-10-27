@@ -14,11 +14,12 @@ from pytorch_lightning import Trainer
 
 from anomalib.config import get_configurable_parameters
 from anomalib.data import get_datamodule
-from anomalib.deploy import OpenVINOInferencer, TorchInferencer, export_convert
+from anomalib.deploy import OpenVINOInferencer, TorchInferencer, export
+from anomalib.deploy.export import ExportMode
 from anomalib.models import get_model
 from anomalib.utils.callbacks import get_callbacks
 from tests.helpers.dataset import TestDataset, get_dataset_path
-from tests.helpers.inference import MockImageLoader, get_meta_data
+from tests.helpers.inference import MockImageLoader
 
 
 def get_model_config(
@@ -74,14 +75,13 @@ class TestInferencers:
             # Test torch inferencer
             torch_inferencer = TorchInferencer(model_config, model)
             torch_dataloader = MockImageLoader(model_config.dataset.image_size, total_count=1)
-            meta_data = get_meta_data(model, model_config.dataset.image_size)
             with torch.no_grad():
                 for image in torch_dataloader():
-                    torch_inferencer.predict(image, meta_data=meta_data)
+                    torch_inferencer.predict(image)
 
     @pytest.mark.parametrize(
         "model_name",
-        ["dfm", "draem", "ganomaly", "padim", "stfpm"],
+        ["dfm", "draem", "ganomaly", "padim", "patchcore", "stfpm"],
     )
     @TestDataset(num_train=20, num_test=1, path=get_dataset_path(), use_mvtec=False)
     def test_openvino_inference(self, model_name: str, category: str = "shapes", path: str = "./datasets/MVTec"):
@@ -103,16 +103,17 @@ class TestInferencers:
 
             trainer.fit(model=model, datamodule=datamodule)
 
-            export_convert(
+            export(
                 model=model,
                 input_size=model_config.dataset.image_size,
-                onnx_path=export_path / "model.onnx",
-                export_path=export_path,
+                export_root=export_path,
+                export_mode=ExportMode.OPENVINO,
             )
 
             # Test OpenVINO inferencer
-            openvino_inferencer = OpenVINOInferencer(model_config, export_path / "model.xml")
+            openvino_inferencer = OpenVINOInferencer(
+                model_config, export_path / "openvino/model.xml", export_path / "openvino/meta_data.json"
+            )
             openvino_dataloader = MockImageLoader(model_config.dataset.image_size, total_count=1)
-            meta_data = get_meta_data(model, model_config.dataset.image_size)
             for image in openvino_dataloader():
-                openvino_inferencer.predict(image, meta_data=meta_data)
+                openvino_inferencer.predict(image)
