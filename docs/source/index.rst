@@ -18,6 +18,7 @@ This documentation is divided into the following sections:
    :name: start
    :caption: Contents
 
+   getting_started/index
    tutorials/index
    how_to_guides/index
    reference_guide/index
@@ -66,18 +67,15 @@ You can cite this repository as
 
 .. code-block:: tex
 
-   @misc{anomalib,
-         title={Anomalib: A Deep Learning Library for Anomaly Detection},
-         author={Samet Akcay and
-               Dick Ameln and
-               Ashwin Vaidya and
-               Barath Lakshmanan and
-               Nilesh Ahuja and
-               Utku Genc},
-         year={2022},
-         eprint={2202.08341},
-         archivePrefix={arXiv},
-         primaryClass={cs.CV}
+   @INPROCEEDINGS{anomalib,
+      author={Akcay, Samet and Ameln, Dick and Vaidya, Ashwin and Lakshmanan, Barath and Ahuja, Nilesh and Genc, Utku},
+      booktitle={2022 IEEE International Conference on Image Processing (ICIP)},
+      title={Anomalib: A Deep Learning Library for Anomaly Detection},
+      year={2022},
+      volume={},
+      number={},
+      pages={1706-1710},
+      doi={10.1109/ICIP46576.2022.9897283}
    }
 
 
