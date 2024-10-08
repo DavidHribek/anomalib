@@ -4,29 +4,28 @@ This script performs torch inference by reading model weights
 from command line, and show the visualization results.
 """
 
-# Copyright (C) 2022 Intel Corporation
+# Copyright (C) 2022-2024 Intel Corporation
 # SPDX-License-Identifier: Apache-2.0
 
-import warnings
+import logging
 from argparse import ArgumentParser, Namespace
 from pathlib import Path
 
 import torch
 
-from anomalib.data.utils import (
-    generate_output_image_filename,
-    get_image_filenames,
-    read_image,
-)
+from anomalib.data.utils import generate_output_image_filename, get_image_filenames, read_image
+from anomalib.data.utils.image import save_image, show_image
 from anomalib.deploy import TorchInferencer
-from anomalib.post_processing import Visualizer
+from anomalib.utils.visualization import ImageVisualizer
+
+logger = logging.getLogger(__name__)
 
 
-def get_args() -> Namespace:
-    """Get command line arguments.
+def get_parser() -> ArgumentParser:
+    """Get parser.
 
     Returns:
-        Namespace: List of arguments.
+        ArgumentParser: The parser object.
     """
     parser = ArgumentParser()
     parser.add_argument("--weights", type=Path, required=True, help="Path to model weights")
@@ -63,44 +62,42 @@ def get_args() -> Namespace:
         help="Show the visualized predictions on the screen.",
     )
 
-    args = parser.parse_args()
-
-    return args
+    return parser
 
 
-def infer() -> None:
+def infer(args: Namespace) -> None:
     """Infer predictions.
 
     Show/save the output if path is to an image. If the path is a directory, go over each image in the directory.
-    """
-    # Get the command line arguments.
-    args = get_args()
 
-    torch.set_grad_enabled(False)
+    Args:
+        args (Namespace): The arguments from the command line.
+    """
+    torch.set_grad_enabled(mode=False)
 
     # Create the inferencer and visualizer.
     inferencer = TorchInferencer(path=args.weights, device=args.device)
-    visualizer = Visualizer(mode=args.visualization_mode, task=args.task)
+    visualizer = ImageVisualizer(mode=args.visualization_mode, task=args.task)
 
     filenames = get_image_filenames(path=args.input)
     for filename in filenames:
-        image = read_image(filename)
+        image = read_image(filename, as_tensor=True)
         predictions = inferencer.predict(image=image)
         output = visualizer.visualize_image(predictions)
 
         if args.output is None and args.show is False:
-            warnings.warn(
-                "Neither output path is provided nor show flag is set. Inferencer will run but return nothing."
-            )
+            msg = "Neither output path is provided nor show flag is set. Inferencer will run but return nothing."
+            logger.warning(msg)
 
         if args.output:
             file_path = generate_output_image_filename(input_path=filename, output_path=args.output)
-            visualizer.save(file_path=file_path, image=output)
+            save_image(filename=file_path, image=output)
 
         # Show the image in case the flag is set by the user.
         if args.show:
-            visualizer.show(title="Output Image", image=output)
+            show_image(title="Output Image", image=output)
 
 
 if __name__ == "__main__":
-    infer()
+    args = get_parser().parse_args()
+    infer(args=args)

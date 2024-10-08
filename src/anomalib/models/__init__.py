@@ -1,31 +1,43 @@
 """Load Anomaly Model."""
 
-# Copyright (C) 2022 Intel Corporation
+# Copyright (C) 2022-2024 Intel Corporation
 # SPDX-License-Identifier: Apache-2.0
 
-from __future__ import annotations
-
 import logging
-import os
 from importlib import import_module
 
-from omegaconf import DictConfig, ListConfig
-from torch import load
+from jsonargparse import Namespace
+from omegaconf import DictConfig, OmegaConf
 
-from anomalib.models.cfa import Cfa
-from anomalib.models.cflow import Cflow
 from anomalib.models.components import AnomalyModule
-from anomalib.models.csflow import Csflow
-from anomalib.models.dfkde import Dfkde
-from anomalib.models.dfm import Dfm
-from anomalib.models.draem import Draem
-from anomalib.models.fastflow import Fastflow
-from anomalib.models.ganomaly import Ganomaly
-from anomalib.models.padim import Padim
-from anomalib.models.patchcore import Patchcore
-from anomalib.models.reverse_distillation import ReverseDistillation
-from anomalib.models.rkde import Rkde
-from anomalib.models.stfpm import Stfpm
+from anomalib.utils.path import convert_to_snake_case
+
+from .image import (
+    Cfa,
+    Cflow,
+    Csflow,
+    Dfkde,
+    Dfm,
+    Draem,
+    Dsr,
+    EfficientAd,
+    Fastflow,
+    Fre,
+    Ganomaly,
+    Padim,
+    Patchcore,
+    ReverseDistillation,
+    Rkde,
+    Stfpm,
+    Uflow,
+    WinClip,
+)
+from .video import AiVad
+
+
+class UnknownModelError(ModuleNotFoundError):
+    pass
+
 
 __all__ = [
     "Cfa",
@@ -34,75 +46,134 @@ __all__ = [
     "Dfkde",
     "Dfm",
     "Draem",
+    "Dsr",
+    "EfficientAd",
     "Fastflow",
+    "Fre",
     "Ganomaly",
     "Padim",
     "Patchcore",
     "ReverseDistillation",
     "Rkde",
     "Stfpm",
+    "Uflow",
+    "AiVad",
+    "WinClip",
 ]
 
 logger = logging.getLogger(__name__)
 
 
-def _snake_to_pascal_case(model_name: str) -> str:
-    """Convert model name from snake case to Pascal case.
+def convert_snake_to_pascal_case(snake_case: str) -> str:
+    """Convert snake_case to PascalCase.
 
     Args:
-        model_name (str): Model name in snake case.
+        snake_case (str): Input string in snake_case
 
     Returns:
-        str: Model name in Pascal case.
+        str: Output string in PascalCase
+
+    Examples:
+        >>> _convert_snake_to_pascal_case("efficient_ad")
+        EfficientAd
+
+        >>> _convert_snake_to_pascal_case("patchcore")
+        Patchcore
     """
-    return "".join([split.capitalize() for split in model_name.split("_")])
+    return "".join(word.capitalize() for word in snake_case.split("_"))
 
 
-def get_model(config: DictConfig | ListConfig) -> AnomalyModule:
-    """Load model from the configuration file.
+def get_available_models() -> set[str]:
+    """Get set of available models.
 
-    Works only when the convention for model naming is followed.
+    Returns:
+        set[str]: List of available models.
 
-    The convention for writing model classes is
-    `anomalib.models.<model_name>.lightning_model.<ModelName>Lightning`
-    `anomalib.models.stfpm.lightning_model.StfpmLightning`
+    Example:
+        >>> get_available_models()
+        ['ai_vad', 'cfa', 'cflow', 'csflow', 'dfkde', 'dfm', 'draem', 'efficient_ad', 'fastflow', ...]
+    """
+    return {convert_to_snake_case(cls.__name__) for cls in AnomalyModule.__subclasses__()}
+
+
+def _get_model_class_by_name(name: str) -> type[AnomalyModule]:
+    """Retrieves an anomaly model based on its name.
 
     Args:
-        config (DictConfig | ListConfig): Config.yaml loaded using OmegaConf
+        name (str): The name of the model to retrieve. The name is case insensitive.
 
     Raises:
-        ValueError: If unsupported model is passed
+        UnknownModelError: If the model is not found.
+
+    Returns:
+        type[AnomalyModule]: Anomaly Model
+    """
+    logger.info("Loading the model.")
+    model_class: type[AnomalyModule] | None = None
+
+    name = convert_snake_to_pascal_case(name).lower()
+    for model in AnomalyModule.__subclasses__():
+        if name == model.__name__.lower():
+            model_class = model
+    if model_class is None:
+        logger.exception(f"Could not find the model {name}. Available models are {get_available_models()}")
+        raise UnknownModelError
+
+    return model_class
+
+
+def get_model(model: DictConfig | str | dict | Namespace, *args, **kwdargs) -> AnomalyModule:
+    """Get Anomaly Model.
+
+    Args:
+        model (DictConfig | str): Can either be a configuration or a string.
+        *args: Variable length argument list for model init.
+        **kwdargs: Arbitrary keyword arguments for model init.
+
+    Examples:
+        >>> get_model("Padim")
+        >>> get_model("efficient_ad")
+        >>> get_model("Patchcore", input_size=(100, 100))
+        >>> get_model({"class_path": "Padim"})
+        >>> get_model({"class_path": "Patchcore"}, input_size=(100, 100))
+        >>> get_model({"class_path": "Padim", "init_args": {"input_size": (100, 100)}})
+        >>> get_model({"class_path": "anomalib.models.Padim", "init_args": {"input_size": (100, 100)}}})
+
+    Raises:
+        TypeError: If unsupported type is passed.
 
     Returns:
         AnomalyModule: Anomaly Model
     """
-    logger.info("Loading the model.")
-
-    model_list: list[str] = [
-        "cfa",
-        "cflow",
-        "csflow",
-        "dfkde",
-        "dfm",
-        "draem",
-        "fastflow",
-        "ganomaly",
-        "padim",
-        "patchcore",
-        "reverse_distillation",
-        "rkde",
-        "stfpm",
-    ]
-    model: AnomalyModule
-
-    if config.model.name in model_list:
-        module = import_module(f"anomalib.models.{config.model.name}")
-        model = getattr(module, f"{_snake_to_pascal_case(config.model.name)}Lightning")(config)
-
+    _model: AnomalyModule
+    if isinstance(model, str):
+        _model_class = _get_model_class_by_name(model)
+        _model = _model_class(*args, **kwdargs)
+    elif isinstance(model, DictConfig | Namespace | dict):
+        if isinstance(model, dict):
+            model = OmegaConf.create(model)
+        try:
+            if len(model.class_path.split(".")) > 1:
+                module = import_module(".".join(model.class_path.split(".")[:-1]))
+            else:
+                module = import_module("anomalib.models")
+        except ModuleNotFoundError as exception:
+            logger.exception(
+                f"Could not find the module {model.class_path}. Available models are {get_available_models()}",
+            )
+            raise UnknownModelError from exception
+        try:
+            model_class = getattr(module, model.class_path.split(".")[-1])
+            init_args = model.get("init_args", {})
+            if len(kwdargs) > 0:
+                init_args.update(kwdargs)
+            _model = model_class(*args, **init_args)
+        except AttributeError as exception:
+            logger.exception(
+                f"Could not find the model {model.class_path}. Available models are {get_available_models()}",
+            )
+            raise UnknownModelError from exception
     else:
-        raise ValueError(f"Unknown model {config.model.name}!")
-
-    if "init_weights" in config.keys() and config.init_weights:
-        model.load_state_dict(load(os.path.join(config.project.path, config.init_weights))["state_dict"], strict=False)
-
-    return model
+        logger.error(f"Unsupported type {type(model)} for model configuration.")
+        raise TypeError
+    return _model

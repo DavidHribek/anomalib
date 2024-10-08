@@ -1,19 +1,18 @@
 """Helper to show progress bars with `urlretrieve`, check hash of file."""
 
-# Copyright (C) 2022 Intel Corporation
+# Copyright (C) 2022-2024 Intel Corporation
 # SPDX-License-Identifier: Apache-2.0
-
-from __future__ import annotations
 
 import hashlib
 import io
 import logging
 import os
+import re
 import tarfile
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from tarfile import TarError, TarFile
-from typing import Iterable
+from tarfile import TarFile, TarInfo
 from urllib.request import urlretrieve
 from zipfile import ZipFile
 
@@ -28,7 +27,8 @@ class DownloadInfo:
 
     name: str
     url: str
-    hash: str
+    hashsum: str
+    filename: str | None = None
 
 
 class DownloadProgressBar(tqdm):
@@ -155,7 +155,7 @@ class DownloadProgressBar(tqdm):
         delay: float | None = 0,
         gui: bool | None = False,
         **kwargs,
-    ):
+    ) -> None:
         super().__init__(
             iterable=iterable,
             desc=desc,
@@ -187,7 +187,7 @@ class DownloadProgressBar(tqdm):
         )
         self.total: int | float | None
 
-    def update_to(self, chunk_number: int = 1, max_chunk_size: int = 1, total_size=None) -> None:
+    def update_to(self, chunk_number: int = 1, max_chunk_size: int = 1, total_size: int | None = None) -> None:
         """Progress bar hook for tqdm.
 
         Based on https://stackoverflow.com/a/53877507
@@ -197,24 +197,120 @@ class DownloadProgressBar(tqdm):
         Args:
             chunk_number (int, optional): The current chunk being processed. Defaults to 1.
             max_chunk_size (int, optional): Maximum size of each chunk. Defaults to 1.
-            total_size ([type], optional): Total download size. Defaults to None.
+            total_size (int, optional): Total download size. Defaults to None.
         """
         if total_size is not None:
             self.total = total_size
         self.update(chunk_number * max_chunk_size - self.n)
 
 
-def hash_check(file_path: Path, expected_hash: str) -> None:
-    """Raise assert error if hash does not match the calculated hash of the file.
+def is_file_potentially_dangerous(file_name: str) -> bool:
+    """Check if a file is potentially dangerous.
+
+    Args:
+        file_name (str): Filename.
+
+    Returns:
+        bool: True if the member is potentially dangerous, False otherwise.
+
+    """
+    # Some example criteria. We could expand this.
+    unsafe_patterns = ["/etc/", "/root/"]
+    return any(re.search(pattern, file_name) for pattern in unsafe_patterns)
+
+
+def safe_extract(tar_file: TarFile, root: Path, members: list[TarInfo]) -> None:
+    """Extract safe members from a tar archive.
+
+    Args:
+        tar_file (TarFile): TarFile object.
+        root (Path): Root directory where the dataset will be stored.
+        members (List[TarInfo]): List of safe members to be extracted.
+
+    """
+    for member in members:
+        # check if the file already exists
+        if not (root / member.name).exists():
+            tar_file.extract(member, root, filter="data")
+
+
+def generate_hash(file_path: str | Path, algorithm: str = "sha256") -> str:
+    """Generate a hash of a file using the specified algorithm.
+
+    Args:
+        file_path (str | Path): Path to the file to hash.
+        algorithm (str): The hashing algorithm to use (e.g., 'sha256', 'sha3_512').
+
+    Returns:
+        str: The hexadecimal hash string of the file.
+
+    Raises:
+        ValueError: If the specified hashing algorithm is not supported.
+    """
+    # Get the hashing algorithm.
+    try:
+        hasher = getattr(hashlib, algorithm)()
+    except AttributeError as err:
+        msg = f"Unsupported hashing algorithm: {algorithm}"
+        raise ValueError(msg) from err
+
+    # Read the file in chunks to avoid loading it all into memory
+    with Path(file_path).open("rb") as file:
+        for chunk in iter(lambda: file.read(4096), b""):
+            hasher.update(chunk)
+
+    # Return the computed hash value in hexadecimal format
+    return hasher.hexdigest()
+
+
+def check_hash(file_path: Path, expected_hash: str, algorithm: str = "sha256") -> None:
+    """Raise value error if hash does not match the calculated hash of the file.
 
     Args:
         file_path (Path): Path to file.
         expected_hash (str): Expected hash of the file.
+        algorithm (str): Hashing algorithm to use ('sha256', 'sha3_512', etc.).
     """
-    with file_path.open("rb") as hash_file:
-        assert (
-            hashlib.md5(hash_file.read()).hexdigest() == expected_hash
-        ), f"Downloaded file {file_path} does not match the required hash."
+    # Compare the calculated hash with the expected hash
+    calculated_hash = generate_hash(file_path, algorithm)
+    if calculated_hash != expected_hash:
+        msg = (
+            f"Calculated hash {calculated_hash} of downloaded file {file_path} does not match the required hash "
+            f"{expected_hash}."
+        )
+        raise ValueError(msg)
+
+
+def extract(file_name: Path, root: Path) -> None:
+    """Extract a dataset.
+
+    Args:
+        file_name (Path): Path of the file to be extracted.
+        root (Path): Root directory where the dataset will be stored.
+
+    """
+    logger.info(f"Extracting dataset into {root} folder.")
+
+    # Safely extract zip files
+    if file_name.suffix == ".zip":
+        with ZipFile(file_name, "r") as zip_file:
+            for file_info in zip_file.infolist():
+                if not is_file_potentially_dangerous(file_info.filename):
+                    zip_file.extract(file_info, root)
+
+    # Safely extract tar files.
+    elif file_name.suffix in {".tar", ".gz", ".xz", ".tgz"}:
+        with tarfile.open(file_name) as tar_file:
+            members = tar_file.getmembers()
+            safe_members = [member for member in members if not is_file_potentially_dangerous(member.name)]
+            safe_extract(tar_file, root, safe_members)
+
+    else:
+        msg = f"Unrecognized file format: {file_name}"
+        raise ValueError(msg)
+
+    logger.info("Cleaning up files.")
+    file_name.unlink()
 
 
 def download_and_extract(root: Path, info: DownloadInfo) -> None:
@@ -227,62 +323,43 @@ def download_and_extract(root: Path, info: DownloadInfo) -> None:
     root.mkdir(parents=True, exist_ok=True)
 
     # save the compressed file in the specified root directory, using the same file name as on the server
-    downloaded_file_path = root / info.url.split("/")[-1]
+    downloaded_file_path = root / info.filename if info.filename else root / info.url.split("/")[-1]
+
     if downloaded_file_path.exists():
         logger.info("Existing dataset archive found. Skipping download stage.")
     else:
         logger.info("Downloading the %s dataset.", info.name)
-        with DownloadProgressBar(unit="B", unit_scale=True, miniters=1, desc=info.name) as progress_bar:
-            urlretrieve(  # nosec - suppress bandit warning (urls are hardcoded)
-                url=f"{info.url}",
-                filename=downloaded_file_path,
-                reporthook=progress_bar.update_to,
-            )
-        logger.info("Checking the hash of the downloaded file.")
-        hash_check(downloaded_file_path, info.hash)
+        # audit url. allowing only http:// or https://
+        if info.url.startswith("http://") or info.url.startswith("https://"):
+            with DownloadProgressBar(unit="B", unit_scale=True, miniters=1, desc=info.name) as progress_bar:
+                urlretrieve(  # noqa: S310  # nosec B310
+                    url=f"{info.url}",
+                    filename=downloaded_file_path,
+                    reporthook=progress_bar.update_to,
+                )
+            logger.info("Checking the hash of the downloaded file.")
+            check_hash(downloaded_file_path, info.hashsum)
+        else:
+            msg = f"Invalid URL to download dataset. Supported 'http://' or 'https://' but '{info.url}' is requested"
+            raise RuntimeError(msg)
 
-    logger.info("Extracting dataset into root folder.")
-    if downloaded_file_path.suffix == ".zip":
-        with ZipFile(downloaded_file_path, "r") as zip_file:
-            zip_file.extractall(root)
-    elif downloaded_file_path.suffix in (".tar", ".gz", ".xz"):
-        with tarfile.open(downloaded_file_path) as tar_file:
-            safe_extract(tar_file, root)
-    else:
-        raise ValueError(f"Unrecognized file format: {downloaded_file_path}")
-
-    logger.info("Cleaning up files.")
-    (downloaded_file_path).unlink()
+    extract(downloaded_file_path, root)
 
 
-def is_within_directory(directory: Path, target: Path):
-    """Checks if a target path is located within a given directory.
+def is_within_directory(directory: Path, target: Path) -> bool:
+    """Check if a target path is located within a given directory.
 
     Args:
         directory (Path): path of the parent directory
         target (Path): path of the target
+
     Returns:
         (bool): True if the target is within the directory, False otherwise
     """
     abs_directory = directory.resolve()
     abs_target = target.resolve()
 
-    # TODO: replace with pathlib is_relative_to after switching to Python 3.10
+    # TODO(djdameln): Replace with pathlib is_relative_to after switching to Python 3.10
+    # CVS-122655
     prefix = os.path.commonprefix([abs_directory, abs_target])
     return prefix == str(abs_directory)
-
-
-def safe_extract(tar_file: TarFile, path: str | Path = "."):
-    """Extract a tar file safely by first checking for attempted path traversal.
-
-    Args:
-        tar_file (TarFile): Tar file to be extracted
-        path (str | Path): path in which the extracted files will be placed
-    """
-    path = Path(path)
-    for member in tar_file.getmembers():
-        member_path = path / member.name
-        if not is_within_directory(path, member_path):
-            raise TarError("Attempted Path Traversal in Tar File")
-
-    tar_file.extractall(path)
